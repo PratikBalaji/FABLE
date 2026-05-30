@@ -7,7 +7,6 @@ Starts with 2 models, learns which excels at what over time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import openai
 import structlog

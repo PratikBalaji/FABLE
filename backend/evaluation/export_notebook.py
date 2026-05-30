@@ -1,9 +1,7 @@
 """Export a F.A.B.L.E. run (or all runs) to a Kaggle-ready .ipynb notebook."""
 from __future__ import annotations
 
-import json
 import textwrap
-from datetime import datetime
 from pathlib import Path
 
 import nbformat

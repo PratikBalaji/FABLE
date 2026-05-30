@@ -5,12 +5,10 @@ model router into a single run that accumulates knowledge over time.
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict
 
-from .bus import AgentBus, AgentMessage, TaskContext, bus
+from .bus import AgentMessage, TaskContext, bus
 from .knowledge_engine import knowledge_engine
 from ..evaluation.rubric import score as rubric_score
-from ..router.model_router import router as model_router
 
 
 async def run_task(
@@ -38,15 +36,15 @@ async def run_task(
     context_block = ""
     if past_context:
         lines = []
-        for i, ctx in enumerate(past_context, 1):
-            lines.append(f"[Prior Run {i} — {ctx['domain']}, model: {ctx['model']}, relevance: {ctx['score']:.2f}]")
-            lines.append(ctx["output"][:300])
+        for i, run_info in enumerate(past_context, 1):
+            lines.append(f"[Prior Run {i} — {run_info['domain']}, model: {run_info['model']}, relevance: {run_info['score']:.2f}]")
+            lines.append(run_info["output"][:300])
         context_block = "\n\n".join(lines)
 
     # Step 2: Learned model routing
     best_model = knowledge_engine.get_best_model_for(input_text)
 
-    ctx = TaskContext(
+    task_ctx = TaskContext(
         task_id=task_id,
         domain=domain,
         input=input_text,
@@ -57,7 +55,7 @@ async def run_task(
     )
 
     # Step 3: Run agent pipeline
-    messages: list[AgentMessage] = await bus.run_collaboration(ctx, pipeline)
+    messages: list[AgentMessage] = await bus.run_collaboration(task_ctx, pipeline)
 
     serialized = [
         {

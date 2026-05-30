@@ -1,7 +1,7 @@
 """Finance domain — registers domain-specific agents and pipeline."""
 from __future__ import annotations
 
-from ...core.bus import AgentBus, AgentMessage, TaskContext
+from ...core.bus import AgentBus, TaskContext
 from ...router.model_router import ModelRouter
 from ...agents.roles import AnalystAgent, CriticAgent, SynthesizerAgent
 

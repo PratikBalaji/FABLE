@@ -1,13 +1,12 @@
 """RAG pipeline: ingest → chunk → embed → store → retrieve."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 
+from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from ..core.config import settings
 
@@ -51,7 +50,7 @@ class VectorStore:
         chunks = list(_chunk_text(text, settings.chunk_size, settings.chunk_overlap))
         if not chunks:
             return 0
-        embeddings = model.encode(chunks, convert_to_numpy=True, normalize_embeddings=True)
+        embeddings = cast(np.ndarray, model.encode(chunks, convert_to_numpy=True, normalize_embeddings=True))
         dim = embeddings.shape[1]
         if self._index is None:
             self._index = faiss.IndexFlatL2(dim)
@@ -64,7 +63,7 @@ class VectorStore:
         if self._index is None or not self._chunks:
             return []
         model = _get_embed_model()
-        q_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
+        q_emb = cast(np.ndarray, model.encode([query], convert_to_numpy=True, normalize_embeddings=True))
         distances, indices = self._index.search(q_emb.astype(np.float32), top_k)
         results = []
         for dist, idx in zip(distances[0], indices[0]):
