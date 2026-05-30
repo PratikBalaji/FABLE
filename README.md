@@ -1,4 +1,4 @@
-# F.A.B.L.E. — Federated Agent Bus & Lifecycle Engine
+# F.A.B.L.E. — Framework of adversarial bots & Logic Engine 
 
 Multi-agent orchestration platform coordinating Claude + auxiliary LLMs across domain-specific collaborative workflows, with RAG, evaluation, an Obsidian-style UI, and Kaggle notebook export.
 
