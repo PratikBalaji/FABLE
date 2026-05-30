@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
+
+html, body {
+  background-color: #1e1e2e;
+  color: #cdd6f4;
+}
+
+/* React Flow dark overrides */
+.react-flow__controls button {
+  background: #313244 !important;
+  border-color: #45475a !important;
+  color: #cdd6f4 !important;
+}
+
+.react-flow__controls button:hover {
+  background: #45475a !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #181825; }
+::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #585b70; }

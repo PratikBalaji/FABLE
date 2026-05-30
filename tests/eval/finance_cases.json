@@ -1,0 +1,14 @@
+[
+  {
+    "label": "NVIDIA revenue analysis",
+    "input": "Analyze NVIDIA's revenue growth drivers and sustainability given its 2024 data center boom. What are the key risks to continued outperformance?"
+  },
+  {
+    "label": "Interest rate sensitivity",
+    "input": "How should a long-duration bond portfolio be repositioned given a potential Fed rate cut cycle beginning in Q3 2025?"
+  },
+  {
+    "label": "SaaS valuation compression",
+    "input": "Evaluate whether current SaaS valuation multiples (EV/NTM Revenue) have bottomed or face further compression given macro conditions."
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "label": "SQL injection vulnerability",
+    "input": "def get_user(username):\n    query = f\"SELECT * FROM users WHERE username = '{username}'\"\n    return db.execute(query)"
+  },
+  {
+    "label": "Missing error handling",
+    "input": "import requests\n\ndef fetch_data(url):\n    response = requests.get(url)\n    return response.json()"
+  },
+  {
+    "label": "N+1 query pattern",
+    "input": "def get_all_posts_with_authors():\n    posts = Post.objects.all()\n    return [{'title': p.title, 'author': p.author.name} for p in posts]"
+  }
+]

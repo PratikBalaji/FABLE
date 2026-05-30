@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+data/
+.next/
+node_modules/
+dist/
+*.faiss
+.venv/
+venv/
+.claude/
