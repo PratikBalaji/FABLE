@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fable-backend"
+version = "0.1.0"
+description = "F.A.B.L.E Backend"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "openai",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+]
