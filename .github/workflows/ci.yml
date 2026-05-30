@@ -19,6 +19,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
+        working-directory: .
       - name: Lint
         run: ruff check .
       - name: Type check

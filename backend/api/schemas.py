@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Any
+from typing import Literal
 
 
 class RunRequest(BaseModel):

@@ -1,7 +1,6 @@
 """Domain-specific document sources for RAG ingestion."""
 from __future__ import annotations
 
-import asyncio
 from typing import AsyncIterator
 
 import httpx

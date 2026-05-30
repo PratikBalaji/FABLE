@@ -14,7 +14,6 @@ Together they form a growing neural substrate that gets smarter with use.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
@@ -302,7 +301,7 @@ class KnowledgeEngine:
 
     def get_relevant_context(self, query: str, top_k: int = 5) -> list[dict]:
         """Retrieve the most relevant past runs for RAG context injection."""
-        if not self.runs:
+        if not self.runs or self._embeddings_matrix is None:
             return []
         query_emb = np.array(self.embed_text(query), dtype=np.float32)
         sims = self._embeddings_matrix @ query_emb
@@ -334,7 +333,7 @@ class KnowledgeEngine:
 
     def get_best_model_for(self, query: str) -> str | None:
         """Determine which model historically performs best for similar queries."""
-        if not self.runs:
+        if not self.runs or self._embeddings_matrix is None:
             return None
         query_emb = np.array(self.embed_text(query), dtype=np.float32)
         sims = self._embeddings_matrix @ query_emb
