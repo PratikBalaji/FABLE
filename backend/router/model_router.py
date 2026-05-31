@@ -29,52 +29,17 @@ AVAILABLE_MODELS = {
     "secondary": settings.secondary_model,   # GPT-4o-mini
 }
 
-# Adversarial pipeline: maps adv: role keys to specific model IDs
-ROLE_MODEL_MAP: dict[str, str] = {
-    "adv:planner":   settings.planner_model,
-    "adv:actor":     settings.actor_model,
-    "adv:critic":    settings.adv_critic_model,
-    "adv:validator": settings.validator_model,
-    "adv:refiner":   settings.refiner_model,
-    "adv:judge":     settings.judge_model,
-}
-
 
 class ModelRouter:
-    def __init__(
-        self,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        provider: str = "openrouter",
-    ) -> None:
-        # Defaults preserve the legacy single-key behaviour (ModelRouter()).
-        self.provider = provider
+    def __init__(self) -> None:
         self._client = openai.AsyncOpenAI(
-            api_key=api_key or settings.openrouter_api_key,
-            base_url=base_url or settings.openrouter_base_url,
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
             default_headers={
                 "HTTP-Referer": settings.app_url,
                 "X-Title": settings.app_name,
             },
         )
-
-    @classmethod
-    def from_credential(cls, cred) -> "ModelRouter":
-        """Build a per-user router from a ResolvedCredential."""
-        return cls(api_key=cred.api_key, base_url=cred.base_url, provider=cred.provider)
-
-    def _resolve_model(self, requested: str | None) -> str:
-        """
-        OpenRouter understands vendor-prefixed slugs (anthropic/claude-...), so we
-        pass `requested` through. Direct BYOK providers (openai/anthropic/google)
-        can't use OpenRouter slugs or per-role multi-vendor routing, so they fall
-        back to that provider's single default model.
-        """
-        if self.provider == "openrouter":
-            return requested or settings.primary_model
-        from ..core.credentials import PROVIDER_DEFAULT_MODEL
-
-        return PROVIDER_DEFAULT_MODEL.get(self.provider, settings.primary_model)
 
     async def complete(
         self,
@@ -83,7 +48,7 @@ class ModelRouter:
         role_hint: str = "",
         force_model: str | None = None,
     ) -> ModelResponse:
-        model = self._resolve_model(force_model)
+        model = force_model or settings.primary_model
 
         resp = await self._client.chat.completions.create(
             model=model,
@@ -92,34 +57,6 @@ class ModelRouter:
                 {"role": "user", "content": user},
             ],
             max_tokens=2048,
-        )
-        msg = resp.choices[0].message
-        return ModelResponse(
-            content=msg.content or "",
-            model=resp.model,
-            usage={
-                "input": resp.usage.prompt_tokens if resp.usage else 0,
-                "output": resp.usage.completion_tokens if resp.usage else 0,
-            },
-        )
-
-    async def complete_for_role(
-        self,
-        role: str,
-        system: str,
-        user: str,
-        max_tokens: int = 2048,
-    ) -> ModelResponse:
-        """Route to the LLM assigned to this adversarial role."""
-        model = self._resolve_model(ROLE_MODEL_MAP.get(role))
-        log.info("adversarial_model_routed", role=role, model=model, provider=self.provider)
-        resp = await self._client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
         )
         msg = resp.choices[0].message
         return ModelResponse(
@@ -170,21 +107,4 @@ class ModelRouter:
         return (label, response)
 
 
-# Legacy singleton — used as a fallback in single-user mode and at agent
-# registration time. In multi-user mode a per-user router is injected per request.
 router = ModelRouter()
-
-
-async def make_router_for_user(
-    user_id: str, preferred: str | None = None
-) -> "ModelRouter | None":
-    """Resolve the user's active provider credential into a per-user router.
-
-    Returns None if the user has no connected provider (caller decides fallback).
-    """
-    from ..core.credentials import resolve_credential
-
-    cred = await resolve_credential(user_id, preferred)
-    if cred is None:
-        return None
-    return ModelRouter.from_credential(cred)

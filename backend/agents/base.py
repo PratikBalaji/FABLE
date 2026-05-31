@@ -20,9 +20,7 @@ class BaseAgent(ABC):
 
     async def __call__(self, ctx: TaskContext) -> AgentMessage:
         prompt = self.build_prompt(ctx)
-        # Per-user router (multi-user mode) wins; fall back to the registration-time singleton.
-        router = ctx.metadata.get("router") or self.router
-        response = await router.complete(
+        response = await self.router.complete(
             system=self.system_prompt,
             user=prompt,
             role_hint=self.role,

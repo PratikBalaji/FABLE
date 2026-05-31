@@ -1,14 +1,12 @@
-"""Rubric-based scorer: rates collaboration output on 5 dimensions.
-
-Uses the caller-supplied per-user router (multi-user mode) so scoring spends the
-same user's credentials as the run; falls back to the singleton router otherwise.
-"""
+"""Rubric-based scorer: uses OpenRouter to rate collaboration output on 5 dimensions."""
 from __future__ import annotations
 
 import json
 import re
 
-from ..router.model_router import ModelRouter, router as default_router
+import openai
+
+from ..core.config import settings
 
 _DIMENSIONS = ["accuracy", "depth", "clarity", "actionability", "coverage"]
 
@@ -26,16 +24,20 @@ _PROMPT_TEMPLATE = """## Task
 Score the output."""
 
 
-async def score(
-    task: str, output: str, router: ModelRouter | None = None
-) -> dict[str, float]:
-    r = router or default_router
-    resp = await r.complete(
-        system=_SYSTEM,
-        user=_PROMPT_TEMPLATE.format(task=task, output=output),
-        role_hint="rubric",
+async def score(task: str, output: str) -> dict[str, float]:
+    client = openai.AsyncOpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
     )
-    raw = (resp.content or "").strip()
+    resp = await client.chat.completions.create(
+        model=settings.primary_model,
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _PROMPT_TEMPLATE.format(task=task, output=output)},
+        ],
+        max_tokens=256,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
     raw = re.sub(r"^```json\s*|```$", "", raw, flags=re.MULTILINE).strip()
     scores = json.loads(raw)
     return {k: float(scores.get(k, 0.0)) for k in _DIMENSIONS}
