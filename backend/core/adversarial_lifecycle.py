@@ -19,6 +19,7 @@ import uuid
 import structlog
 
 from .bus import AgentMessage, TaskContext, bus
+from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
 from .memory_service import memory_service
 from ..evaluation.rubric import score as rubric_score
@@ -51,6 +52,11 @@ async def run_adversarial_task(
     task_id = str(uuid.uuid4())
     multiuser = bool(settings.use_supabase and user_id)
     log.info("adversarial_task_started", task_id=task_id, domain=domain, max_rounds=max_rounds)
+
+    # Guardrail pre-check on user input
+    pre = await guardrail_engine.pre_check(user_id, input_text, router=router)
+    if pre.verdict == "block":
+        raise GuardrailBlocked(pre, "pre_check")
 
     # Retrieve context: per-user semantic memory (multi-user) or global file engine (legacy).
     if multiuser:
@@ -129,6 +135,11 @@ async def run_adversarial_task(
         scores = await rubric_score(input_text, final_output, router=router)
     except Exception:
         scores = {}
+
+    # Guardrail post-check (credential-leak only)
+    post = await guardrail_engine.post_check(user_id, final_output, router=router)
+    if post.verdict == "block":
+        raise GuardrailBlocked(post, "post_check")
 
     graph_state = knowledge_engine.ingest_run(
         input_text=input_text,

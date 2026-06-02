@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..agents.register import register_all
-from .routes import run, feedback, ingest, graph
+from .routes import run, feedback, ingest, graph, identity
 
 log = structlog.get_logger()
 
@@ -37,6 +37,7 @@ app.include_router(run.router, tags=["Orchestration"])
 app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(ingest.router, tags=["RAG"])
 app.include_router(graph.router, tags=["Knowledge Graph"])
+app.include_router(identity.router, tags=["Identity"])
 
 
 @app.get("/health")
