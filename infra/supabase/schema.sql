@@ -308,3 +308,107 @@ as $$
   order by mc.embedding OPERATOR(extensions.<=>) query_embedding
   limit match_count;
 $$;
+
+
+-- =========================================================
+-- P4a. Privacy & Identity Foundation
+-- =========================================================
+
+-- 14. identities — pseudonymous-first with optional Supabase Auth link
+create table if not exists public.identities (
+  id              uuid primary key default gen_random_uuid(),
+  pseudonymous    boolean not null default true,
+  auth_user_id    uuid references auth.users(id) on delete set null,
+  linked_at       timestamptz,
+  consent_link    boolean not null default false,
+  consent_memory  boolean not null default true,
+  created_at      timestamptz not null default now(),
+  last_seen_at    timestamptz not null default now()
+);
+create unique index if not exists identities_auth_user_idx
+  on public.identities (auth_user_id) where auth_user_id is not null;
+
+alter table public.identities enable row level security;
+drop policy if exists identities_select_linked on public.identities;
+drop policy if exists identities_modify_linked on public.identities;
+-- Authed users may see / modify their linked identity row via RLS;
+-- pseudonymous rows are accessed only via service-role + app-layer filter.
+create policy identities_select_linked on public.identities
+  for select using ((select auth.uid()) = auth_user_id);
+create policy identities_modify_linked on public.identities
+  for all using ((select auth.uid()) = auth_user_id)
+       with check ((select auth.uid()) = auth_user_id);
+
+-- 15. pii_entity_map — encrypted entity values per session/task, short TTL
+create table if not exists public.pii_entity_map (
+  id           uuid primary key default gen_random_uuid(),
+  session_id   uuid not null references public.chat_sessions(id) on delete cascade,
+  task_id      text not null,
+  placeholder  text not null,
+  entity_enc   text not null,
+  entity_type  text not null,
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null default (now() + interval '7 days')
+);
+create index if not exists pii_entity_map_session_task_idx
+  on public.pii_entity_map (session_id, task_id);
+create index if not exists pii_entity_map_expires_idx
+  on public.pii_entity_map (expires_at);
+
+alter table public.pii_entity_map enable row level security;
+-- Pure service-role access; no authenticated/anon path. No policies => no rows for anon/authed.
+
+-- 16. Add identity_id to existing tables (nullable for backwards compat).
+--     New writes populate identity_id; legacy rows keep user_id only.
+alter table public.chat_sessions         add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.chat_messages         add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.adversarial_runs      add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.adversarial_messages  add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.memory_chunks         add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.provider_connections  add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.oauth_states          add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+alter table public.guardrail_events      add column if not exists identity_id uuid references public.identities(id) on delete cascade;
+
+create index if not exists chat_sessions_identity_idx        on public.chat_sessions (identity_id, updated_at desc);
+create index if not exists chat_messages_identity_idx        on public.chat_messages (identity_id, created_at desc);
+create index if not exists adversarial_runs_identity_idx     on public.adversarial_runs (identity_id, created_at desc);
+create index if not exists adversarial_messages_identity_idx on public.adversarial_messages (identity_id, created_at desc);
+create index if not exists memory_chunks_identity_idx        on public.memory_chunks (identity_id, created_at desc);
+create index if not exists provider_connections_identity_idx on public.provider_connections (identity_id, provider) where status = 'active';
+create index if not exists oauth_states_identity_idx         on public.oauth_states (identity_id);
+create index if not exists guardrail_events_identity_idx     on public.guardrail_events (identity_id, created_at desc);
+
+-- 17. match_memory_chunks_by_identity — identity-scoped cosine search (P4a)
+create or replace function public.match_memory_chunks_by_identity(
+  p_identity_id   uuid,
+  query_embedding extensions.vector(384),
+  match_count     int default 8
+)
+returns table (
+  id          uuid,
+  source_type public.memory_source_enum,
+  source_id   uuid,
+  session_id  uuid,
+  domain      text,
+  content     text,
+  metadata    jsonb,
+  similarity  real,
+  created_at  timestamptz
+)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select
+    mc.id, mc.source_type, mc.source_id, mc.session_id, mc.domain,
+    mc.content, mc.metadata,
+    (1 - (mc.embedding OPERATOR(extensions.<=>) query_embedding))::real as similarity,
+    mc.created_at
+  from public.memory_chunks mc
+  where mc.identity_id = p_identity_id
+  order by mc.embedding OPERATOR(extensions.<=>) query_embedding
+  limit match_count;
+$$;
+revoke execute on function public.match_memory_chunks_by_identity(uuid, extensions.vector, int)
+  from public;

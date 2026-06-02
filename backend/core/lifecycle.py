@@ -7,14 +7,18 @@ from __future__ import annotations
 import uuid
 
 from .bus import AgentMessage, TaskContext, bus
+from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
 from ..evaluation.rubric import score as rubric_score
+from ..router.model_router import router as default_router
 
 
 async def run_task(
     input_text: str,
     domain: str,
     pipeline: list[str] | None = None,
+    *,
+    user_id: str | None = None,
 ) -> dict:
     """
     Execute a full multi-agent collaboration run with knowledge accumulation.
@@ -30,6 +34,11 @@ async def run_task(
         pipeline = ["analyst", "critic", "synthesizer"]
 
     task_id = str(uuid.uuid4())
+
+    # Step 0: Guardrail pre-check on user input
+    pre = await guardrail_engine.pre_check(user_id, input_text, router=default_router)
+    if pre.verdict == "block":
+        raise GuardrailBlocked(pre, "pre_check")
 
     # Step 1: Retrieve relevant context from past knowledge
     past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
@@ -76,6 +85,11 @@ async def run_task(
         scores = await rubric_score(input_text, final_output)
     except Exception:
         scores = {}
+
+    # Step 4b: Guardrail post-check on final output (credential-leak only)
+    post = await guardrail_engine.post_check(user_id, final_output, router=default_router)
+    if post.verdict == "block":
+        raise GuardrailBlocked(post, "post_check")
 
     # Step 5: Feed back into knowledge engine
     graph_state = knowledge_engine.ingest_run(

@@ -55,39 +55,41 @@ class GuardrailBlocked(Exception):
 # Layer 1 — Rule-based checks
 # ---------------------------------------------------------------------------
 
-# Phrases that indicate an attempt to override the agent's instructions.
-# Compiled once at import.
+# Phrases indicating an attempt to override the agent's instructions.
+# NB: NOT using re.X (verbose mode) — whitespace must match literally.
 _PROMPT_INJECTION = re.compile(
-    r"(?ix)"
-    r"\b(?:"
-    r"ignore (?:all )?(?:previous|prior|the above) (?:instructions?|prompts?|rules?|context)"
-    r"|disregard (?:all )?(?:previous|prior|the above) (?:instructions?|prompts?|rules?|context)"
-    r"|forget (?:everything|all|previous|prior) (?:above|instructions?|context|rules?)"
-    r"|you are (?:now|actually) (?:a |an )?(?:dan|jailbroken|unrestricted|uncensored)"
-    r"|pretend (?:to be|you are|that you are)(?:.{0,80})(?:without|no) (?:restrictions?|rules?|filters?|guardrails?)"
-    r"|act as (?:dan|stan|developer mode|evil|unrestricted|jailbroken)"
-    r"|new (?:system )?prompt[:\-=]"
-    r"|system (?:override|injection|prompt[:\-=])"
-    r"|reveal (?:your |the )?(?:system )?(?:prompt|instructions)"
-    r"|<\|im_start\|>system"
-    r")\b"
+    r"(?i)("
+    r"ignore\s+(?:all\s+)?(?:previous|prior|the\s+above)\s+(?:instructions?|prompts?|rules?|context)"
+    r"|disregard\s+(?:all\s+)?(?:previous|prior|the\s+above)\s+(?:instructions?|prompts?|rules?|context)"
+    r"|forget\s+(?:everything|all|previous|prior)\s+(?:above|instructions?|context|rules?)"
+    r"|you\s+are\s+(?:now|actually)\s+(?:a\s+|an\s+)?(?:dan|jailbroken|unrestricted|uncensored)"
+    r"|pretend\s+(?:to\s+be|you\s+are|that\s+you\s+are).{0,80}?(?:without|no)\s+(?:restrictions?|rules?|filters?|guardrails?)"
+    r"|act\s+as\s+(?:dan|stan|developer\s+mode|evil|unrestricted|jailbroken)"
+    r"|new\s+(?:system\s+)?prompt\s*[:\-=]"
+    r"|system\s+(?:override|injection|prompt\s*[:\-=])"
+    r"|reveal\s+(?:your\s+|the\s+)?(?:system\s+)?(?:prompt|instructions)"
+    r"|<\|im_start\|>\s*system"
+    r")"
 )
 
 # Attempts to exfiltrate credentials / secrets the model might know.
 _CREDENTIAL_EXFIL = re.compile(
-    r"(?ix)"
-    r"\b(?:"
-    r"(?:what|show|tell|reveal|print|leak|dump|give me|whats|what is)"
+    r"(?i)("
+    # "what is my <provider> [api] key/token/secret"
+    r"(?:what|show|tell|reveal|print|leak|dump|give\s+me|whats|what\s+is)"
     r"\s+(?:is\s+)?(?:my|the|your)?\s*"
-    r"(?:openrouter|openai|anthropic|google|gemini|service[\-_ ]role|jwt|api|access|secret|encryption)"
-    r"\s*(?:api\s*)?(?:key|token|secret|password|bearer)"
+    r"(?:openrouter|openai|anthropic|google|gemini|service[\-_\s]role|jwt|api|access|secret|encryption)"
+    r"[\s_\-]*(?:api[\s_\-]*)?(?:key|token|secret|password|bearer)"
+    # explicit env-var names
+    r"|OPENROUTER_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|APP_ENCRYPTION_KEY"
+    # shell exfil
     r"|print\s+process\.env"
-    r"|cat\s+\.env"
+    r"|cat\s+\.?env"
     r"|echo\s+\$\{?(?:OPENROUTER|OPENAI|ANTHROPIC|SUPABASE|APP_ENCRYPTION)_"
-    r"|SUPABASE_SERVICE_ROLE_KEY"
-    r"|sk-or-v1-[a-z0-9]{16,}"  # don't echo a real key
+    # raw key prefixes (don't echo a real key)
+    r"|sk-or-v1-[a-z0-9]{16,}"
     r"|sk-ant-api03-[a-z0-9_\-]{16,}"
-    r")\b"
+    r")"
 )
 
 # Anything else the operator wants to hard-block. Keep short — most policy
