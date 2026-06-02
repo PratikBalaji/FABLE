@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     # OpenRouter (unified LLM gateway)
     openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_oauth_callback: str = "http://localhost:3000/api/auth/openrouter/callback"
+    openrouter_auth_url: str = "https://openrouter.ai/auth"
+    openrouter_key_exchange_url: str = "https://openrouter.ai/api/v1/auth/keys"
 
     # Models routed via OpenRouter
     primary_model: str = "anthropic/claude-sonnet-4"      # analyst (deep reasoning)

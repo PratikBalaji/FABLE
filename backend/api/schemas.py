@@ -67,3 +67,64 @@ class IngestRequest(BaseModel):
 class IngestResponse(BaseModel):
     chunks_added: int
     source: str
+
+
+class ChatMessageOut(BaseModel):
+    id: str
+    role: str
+    content: str
+    model_used: str | None = None
+    scores: dict | None = None
+    adversarial_run_id: str | None = None
+    created_at: str
+
+
+class MemoryHitOut(BaseModel):
+    id: str
+    source_type: str
+    session_id: str | None = None
+    domain: str | None = None
+    content: str
+    similarity: float
+    created_at: str | None = None
+
+
+class SessionCreateRequest(BaseModel):
+    domain: str
+    title: str | None = None
+
+
+class SessionOut(BaseModel):
+    id: str
+    title: str | None = None
+    domain: str
+    created_at: str
+    updated_at: str
+
+
+class ProviderAddRequest(BaseModel):
+    provider: str
+    api_key: str
+    label: str | None = None
+    base_url: str | None = None
+
+
+class ProviderConnectionOut(BaseModel):
+    id: str
+    provider: str
+    conn_type: str
+    label: str | None = None
+    last4: str | None = None
+    status: str
+    last_validated_at: str | None = None
+    created_at: str | None = None
+
+
+class ProviderTestOut(BaseModel):
+    ok: bool
+    detail: str | None = None
+
+
+class OAuthStartOut(BaseModel):
+    auth_url: str
+    state: str

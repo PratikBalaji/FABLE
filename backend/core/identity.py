@@ -169,10 +169,10 @@ async def resolve_identity(
     if cookie:
         identity_id = _read_cookie(cookie)
         if identity_id:
-            row = _find_by_id(identity_id)
-            if row:
-                _touch_last_seen(row["id"])
-                return _row_to_identity(row)
+            found = _find_by_id(identity_id)
+            if found:
+                _touch_last_seen(found["id"])
+                return _row_to_identity(found)
             # cookie referenced a missing row (cascade-deleted) → mint fresh
         # bad / expired signature → mint fresh
 

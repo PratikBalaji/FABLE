@@ -12,7 +12,6 @@ controlled by the Judge's ACCEPT/REJECT verdict.
 from __future__ import annotations
 
 from ..core.bus import AgentMessage, TaskContext
-from ..router.model_router import ModelRouter
 from .base import BaseAgent
 
 # Per-role token budgets — keeps costs predictable

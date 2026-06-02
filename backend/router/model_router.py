@@ -68,6 +68,42 @@ class ModelRouter:
             },
         )
 
+    async def complete_for_role(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        max_tokens: int = 1024,
+    ) -> ModelResponse:
+        model_map = {
+            "adv:planner": settings.planner_model,
+            "adv:actor": settings.actor_model,
+            "adv:critic": settings.adv_critic_model,
+            "adv:validator": settings.validator_model,
+            "adv:refiner": settings.refiner_model,
+            "adv:judge": settings.judge_model,
+        }
+        model = model_map.get(role, settings.primary_model)
+
+        resp = await self._client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=max_tokens,
+        )
+        msg = resp.choices[0].message
+        return ModelResponse(
+            content=msg.content or "",
+            model=resp.model,
+            usage={
+                "input": resp.usage.prompt_tokens if resp.usage else 0,
+                "output": resp.usage.completion_tokens if resp.usage else 0,
+            },
+        )
+
+
     async def complete_with_routing(
         self,
         system: str,

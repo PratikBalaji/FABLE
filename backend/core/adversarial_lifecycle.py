@@ -60,6 +60,7 @@ async def run_adversarial_task(
 
     # Retrieve context: per-user semantic memory (multi-user) or global file engine (legacy).
     if multiuser:
+        assert user_id is not None
         context_block = await memory_service.grouped_context(user_id, input_text)
     else:
         past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
@@ -132,7 +133,7 @@ async def run_adversarial_task(
     model_used = _judge_model(all_messages)
 
     try:
-        scores = await rubric_score(input_text, final_output, router=router)
+        scores = await rubric_score(input_text, final_output)
     except Exception:
         scores = {}
 
@@ -174,6 +175,7 @@ async def run_adversarial_task(
 
     # Persist per-user memory: full transcript + a linked assistant chat turn (multi-user mode).
     if multiuser:
+        assert user_id is not None
         run_id = await memory_service.store_adversarial_run(
             user_id=user_id,
             session_id=session_id,
