@@ -6,7 +6,6 @@
             "routePrefix": "/"
         },
         "backend": {
-            "root": "backend",
             "framework": "python",
             "routePrefix": "/_/backend"
         }
