@@ -68,14 +68,22 @@ def _read_cookie(value: str) -> str | None:
 
 
 def set_identity_cookie(response: Response, identity_id: str) -> None:
-    """Helper for route handlers: stamp the signed cookie on the response."""
+    """Helper for route handlers: stamp the signed cookie on the response.
+
+    P6c: `samesite` + `secure` now read from settings to support cross-origin
+    deploy (Vercel frontend ↔ Cloud Run backend → samesite="none", secure=true).
+    Local dev (same-origin) keeps samesite="lax". Note: `none` requires HTTPS.
+    """
+    samesite_value = (settings.cookie_samesite or "lax").lower()
+    if samesite_value not in ("lax", "strict", "none"):
+        samesite_value = "lax"
     response.set_cookie(
         key=settings.identity_cookie_name,
         value=_sign_cookie(identity_id),
         max_age=settings.identity_cookie_max_age_days * 86400,
         httponly=True,
-        secure=True,           # require HTTPS in transit; dev with localhost may need override
-        samesite="lax",
+        secure=settings.cookie_secure,
+        samesite=samesite_value,
     )
 
 

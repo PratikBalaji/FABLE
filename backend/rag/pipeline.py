@@ -2,22 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Iterator
 
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 
 from ..core.config import settings
-
-_EMBED_MODEL: SentenceTransformer | None = None
-
-
-def _get_embed_model() -> SentenceTransformer:
-    global _EMBED_MODEL
-    if _EMBED_MODEL is None:
-        _EMBED_MODEL = SentenceTransformer(settings.embedding_model)
-    return _EMBED_MODEL
+from ..core.embeddings import embed_batch as _api_embed_batch
 
 
 def _chunk_text(text: str, size: int, overlap: int) -> Iterator[str]:
@@ -46,15 +37,15 @@ class VectorStore:
 
     def ingest(self, text: str, metadata: dict | None = None) -> int:
         """Chunk, embed, and add text to the store. Returns number of chunks added."""
-        model = _get_embed_model()
         chunks = list(_chunk_text(text, settings.chunk_size, settings.chunk_overlap))
         if not chunks:
             return 0
-        embeddings = cast(np.ndarray, model.encode(chunks, convert_to_numpy=True, normalize_embeddings=True))
+        # P6b: OpenAI text-embedding-3-small via shared embeddings module.
+        embeddings = np.array(_api_embed_batch(chunks), dtype=np.float32)
         dim = embeddings.shape[1]
         if self._index is None:
             self._index = faiss.IndexFlatL2(dim)
-        self._index.add(embeddings.astype(np.float32))
+        self._index.add(embeddings)
         self._chunks.extend(chunks)
         self._meta.extend([metadata or {}] * len(chunks))
         return len(chunks)
@@ -62,9 +53,8 @@ class VectorStore:
     def retrieve(self, query: str, top_k: int = settings.retrieval_top_k) -> list[dict]:
         if self._index is None or not self._chunks:
             return []
-        model = _get_embed_model()
-        q_emb = cast(np.ndarray, model.encode([query], convert_to_numpy=True, normalize_embeddings=True))
-        distances, indices = self._index.search(q_emb.astype(np.float32), top_k)
+        q_emb = np.array([_api_embed_batch([query])[0]], dtype=np.float32)
+        distances, indices = self._index.search(q_emb, top_k)
         results = []
         for dist, idx in zip(distances[0], indices[0]):
             if idx < len(self._chunks):

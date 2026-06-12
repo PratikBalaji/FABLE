@@ -52,10 +52,12 @@ export interface RunResponse {
   knowledge_graph: GraphState;
 }
 
+// P5a: domain is now optional + open-ended. Backend defaults to "general".
 export async function runTask(params: {
   input: string;
-  domain: "code_review" | "finance";
+  domain?: string;
   pipeline?: string[];
+  session_id?: string;
 }): Promise<RunResponse> {
   const { data } = await api.post<RunResponse>("/run", params);
   return data;

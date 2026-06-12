@@ -5,11 +5,10 @@ import { runTask, getGraph, type AgentMessage, type RunResponse, type GraphState
 
 const PlanetaryGraph = dynamic(() => import("@/components/graph/PlanetaryGraph"), { ssr: false });
 
-const DOMAINS = ["code_review", "finance"] as const;
+// P5a: domain selector retired. Prompt input is open-ended; backend defaults to "general".
 
 export default function Home() {
   const [input, setInput] = useState("");
-  const [domain, setDomain] = useState<"code_review" | "finance">("code_review");
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [graphState, setGraphState] = useState<GraphState | null>(null);
   const [scores, setScores] = useState<Record<string, number>>({});
@@ -32,7 +31,7 @@ export default function Home() {
     setMessages([]);
     setScores({});
     try {
-      const result: RunResponse = await runTask({ input, domain });
+      const result: RunResponse = await runTask({ input });
       setMessages(result.messages);
       setTaskId(result.task_id);
       setScores(result.scores);
@@ -62,21 +61,10 @@ export default function Home() {
         <aside className="w-80 min-w-64 bg-mantle border-r border-surface0 flex flex-col p-4 gap-4">
           <h2 className="text-subtext text-xs uppercase tracking-widest">Task Input</h2>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3 flex-1">
-            <select
-              value={domain}
-              onChange={(e) => setDomain(e.target.value as typeof domain)}
-              className="bg-surface0 border border-surface1 text-text rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent"
-            >
-              {DOMAINS.map((d) => (
-                <option key={d} value={d}>{d.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}</option>
-              ))}
-            </select>
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={domain === "code_review"
-                ? "Paste code or a diff to review..."
-                : "Enter a financial research query..."}
+              placeholder="Ask anything — code, finance, research, creative, factual..."
               className="flex-1 bg-surface0 border border-surface1 text-text rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-accent placeholder:text-overlay min-h-48"
             />
             {error && <p className="text-red text-xs">{error}</p>}

@@ -25,3 +25,17 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Repo content NOT needed in backend image (P6c — keeps Cloud Run image lean)
+frontend/
+notebooks/
+tests/
+.github/
+docs/
+infra/aws/
+infra/docker/
+.claude/
+RESEARCH_LOG.md
+README.md
+*.md
+*.ipynb
