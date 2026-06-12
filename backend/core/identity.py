@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal, cast
 
 import structlog
 from fastapi import Request, Response
@@ -83,7 +84,7 @@ def set_identity_cookie(response: Response, identity_id: str) -> None:
         max_age=settings.identity_cookie_max_age_days * 86400,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite=samesite_value,
+        samesite=cast(Literal["lax", "strict", "none"], samesite_value),
     )
 
 
