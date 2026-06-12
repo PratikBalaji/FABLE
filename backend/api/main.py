@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..agents.register import register_all
+from ..agents.adversarial_register import register_adversarial
 from .routes import run, feedback, ingest, graph, identity
 
 log = structlog.get_logger()
@@ -14,6 +15,7 @@ log = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     register_all()
+    register_adversarial()
     log.info("fable_started")
     yield
     log.info("fable_stopped")
