@@ -22,18 +22,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
-from .config import settings
-
-_EMBED_MODEL: SentenceTransformer | None = None
-
-
-def _get_embed_model() -> SentenceTransformer:
-    global _EMBED_MODEL
-    if _EMBED_MODEL is None:
-        _EMBED_MODEL = SentenceTransformer(settings.embedding_model)
-    return _EMBED_MODEL
+from .embeddings import embed_text as _api_embed_text
 
 
 # ---------------------------------------------------------------------------
@@ -142,9 +132,8 @@ class KnowledgeEngine:
     # -- Core operations -----------------------------------------------------
 
     def embed_text(self, text: str) -> list[float]:
-        model = _get_embed_model()
-        vec = model.encode([text], normalize_embeddings=True)[0]
-        return vec.tolist()
+        # P6b: OpenAI text-embedding-3-small via shared embeddings module.
+        return _api_embed_text(text)
 
     def extract_concepts(self, text: str) -> list[str]:
         """Extract key concepts from text using simple NLP heuristics.

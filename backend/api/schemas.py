@@ -1,10 +1,11 @@
 from pydantic import BaseModel, Field
-from typing import Literal
 
 
 class RunRequest(BaseModel):
-    input: str = Field(..., description="Task text, code diff, or financial query")
-    domain: Literal["code_review", "finance"] = "code_review"
+    input: str = Field(..., description="Open-ended prompt — any task type")
+    # P5a: widened from Literal["code_review","finance"] to free-form str.
+    # Downstream code never branched on this field; it is purely a label/tag.
+    domain: str = Field(default="general", description="Optional domain tag (default: general)")
     pipeline: list[str] | None = Field(
         None, description="Override agent pipeline order. Default: analyst→critic→synthesizer"
     )

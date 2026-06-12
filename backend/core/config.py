@@ -18,7 +18,13 @@ class Settings(BaseSettings):
     critic_model: str = "openai/gpt-4o-mini"
 
     # RAG
-    embedding_model: str = "all-MiniLM-L6-v2"
+    # P6b: switched from local sentence-transformers all-MiniLM-L6-v2 to OpenAI
+    # text-embedding-3-small (truncated to dim=384). Schema vector(384) unchanged.
+    embedding_model: str = "all-MiniLM-L6-v2"  # legacy field; informational only
+    embeddings_provider: str = Field(default="openai", alias="EMBEDDINGS_PROVIDER")
+    embeddings_model: str = Field(default="text-embedding-3-small", alias="EMBEDDINGS_MODEL")
+    embeddings_dimensions: int = Field(default=384, alias="EMBEDDINGS_DIMENSIONS")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     vector_store_path: str = "./data/vectorstore"
     chunk_size: int = 512
     chunk_overlap: int = 64
@@ -73,13 +79,16 @@ class Settings(BaseSettings):
     identity_cookie_name: str = Field(default="fable_id", alias="IDENTITY_COOKIE_NAME")
     identity_cookie_secret: str = Field(default="", alias="IDENTITY_COOKIE_SECRET")
     identity_cookie_max_age_days: int = Field(default=365, alias="IDENTITY_COOKIE_MAX_AGE_DAYS")
+    # P6c: cross-origin deploy (Vercel frontend + Cloud Run backend) requires
+    # samesite="none". Local dev (same-origin) can keep "lax".
+    cookie_samesite: str = Field(default="lax", alias="COOKIE_SAMESITE")
+    cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
 
-    # PII redaction (Presidio + optional LLM fallback)
+    # PII redaction (regex + optional LLM extraction layer, P6a)
     pii_enabled: bool = Field(default=True, alias="PII_ENABLED")
     pii_llm_fallback: bool = Field(default=True, alias="PII_LLM_FALLBACK")
     pii_classifier_model: str = Field(default="meta-llama/llama-guard-3-8b", alias="PII_CLASSIFIER_MODEL")
     pii_confidence_threshold: float = Field(default=0.40, alias="PII_CONFIDENCE_THRESHOLD")
-    pii_spacy_model: str = Field(default="en_core_web_lg", alias="PII_SPACY_MODEL")
 
     # Memory abstraction — never store raw text in memory_chunks
     memory_abstraction_enabled: bool = Field(default=True, alias="MEMORY_ABSTRACTION_ENABLED")

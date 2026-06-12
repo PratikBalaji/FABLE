@@ -15,7 +15,8 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "structlog",
-    "sentence-transformers",
+    # P6b: dropped sentence-transformers (+torch +transformers +huggingface-hub)
+    # in favor of OpenAI text-embedding-3-small via the existing `openai` SDK.
     "faiss-cpu",
     "numpy",
     # Multi-user platform (P2)
@@ -23,10 +24,8 @@ dependencies = [
     "httpx",
     "pyjwt[crypto]",
     "cryptography",
-    # Privacy + identity (P4a)
-    "presidio-analyzer",
-    "presidio-anonymizer",
-    "spacy",
+    # Privacy + identity (P4a / P6a)
+    # P6a swapped Presidio + spaCy for regex + LLM extraction to fit free-tier deploy targets.
     "itsdangerous",
 ]
 

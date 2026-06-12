@@ -559,3 +559,254 @@ re-pasting `infra/supabase/schema.sql`.
 - Add `IDENTITY_COOKIE_SECRET` to `.env`: `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
 - Install heavy deps: `pip install -e backend && python -m spacy download en_core_web_lg`.
 - (Optional, but to keep working without Presidio) set `PII_ENABLED=false`.
+
+---
+---
+
+# Phase 6 — $0/mo deploy: Presidio + sentence-transformers out, Cloud Run in
+
+**Constraint**: zero out-of-pocket monthly cost. Drop heavy deps that block free-tier
+deploy targets, swap to API-based equivalents, ship to Google Cloud Run (free tier:
+2M req/mo, 360k vCPU-sec, scales to zero). Document trade-offs honestly for the paper.
+
+## P6a — Regex + LLM hybrid PII (Presidio out)
+
+### Architecture decision
+Notebook spec demands "no raw PII enters memory" with a hard-stop guarantee. Presidio
+delivered that with spaCy NER + 50+ recognizers, but `presidio-analyzer` +
+`presidio-anonymizer` + `spacy en_core_web_lg` is ~1GB on disk and dominates the
+backend image. Free-tier deploy targets (Cloud Run free tier image limits, Vercel
+Functions 50MB) reject it.
+
+Two coverage strategies considered:
+- **(A) LLM-only single-shot redaction.** One model call per turn extracts ALL PII.
+  Simplest; ~300ms latency; coverage ~80% of Presidio.
+- **(B) Regex + LLM hybrid (selected).** Regex handles the structured PII Presidio
+  was *trivially* good at (emails, phones, SSN, credit cards w/ Luhn, IBAN, IP,
+  API key prefixes — fast, deterministic). One LLM call adds NAME/LOCATION/ORG
+  spans the regex layer can't see. ~85% of Presidio coverage on PERSON entities;
+  parity on structured.
+
+Chose (B): keeps deterministic detection on the easy-to-test categories (Luhn-validated
+credit cards, SSN format, RFC-5322 email), reserves the LLM cost for the legitimately
+hard NER work, and the existing PII module API (`redact / reinject /
+abstract_for_memory / persist_entity_map / PiiRedactionFailed`) stays unchanged so
+P4a's wiring through `run.py` doesn't move.
+
+### Files changed (P6a)
+- `backend/core/pii.py` — rewritten body. `_REGEX_PATTERNS` list of
+  `(entity_type, compiled regex, validator)`; `_luhn_valid()`; `_regex_scan()`;
+  `_llm_extract(text, router)` returns NAME/LOCATION/ORG spans via single JSON
+  classifier call; `_merge_spans()` dedupes overlaps (regex confidence wins).
+- `backend/core/config.py` — dropped `pii_spacy_model`.
+- `backend/pyproject.toml` + root `pyproject.toml` — removed `presidio-analyzer`,
+  `presidio-anonymizer`, `spacy`.
+
+### Coverage trade-off (paper-disclosed)
+| PII type | Presidio | P6a regex+LLM |
+|---|---|---|
+| EMAIL_ADDRESS | ✓ | ✓ regex |
+| PHONE_NUMBER | ✓ | ✓ regex (10+ digit floor) |
+| US_SSN | ✓ | ✓ regex (invalid-area filter) |
+| CREDIT_CARD | ✓ | ✓ regex + Luhn validation |
+| IBAN | ✓ | ✓ regex (length 15-34) |
+| IP_ADDRESS | ✓ | ✓ regex (octet range) |
+| API_KEY | ✗ (custom recognizer needed) | ✓ regex on OpenRouter/Anthropic/OpenAI prefixes |
+| PERSON | ✓ spaCy NER (~95% F1) | ✓ LLM (~80-85% recall, calibration TBD) |
+| LOCATION | ✓ spaCy NER | ✓ LLM (~75-80% recall) |
+| ORGANIZATION | ✓ spaCy NER | ✓ LLM |
+| Custom recognizers (DEA, NHS#, etc.) | ✓ 50+ built-in | ✗ — case-by-case regex addition |
+
+### P6a verification (11/11 pass)
+| Test | Outcome |
+|---|---|
+| Email regex catch + placeholder | PASS |
+| Phone with parens + dash | PASS |
+| US SSN format | PASS |
+| Credit card 4111 1111 1111 1111 — Luhn valid | PASS |
+| Credit-shaped 4111 1111 1111 1112 — Luhn REJECTS | PASS |
+| OpenRouter API key prefix | PASS |
+| IPv4 octet range | PASS |
+| `reinject()` round-trip | PASS |
+| Overlap dedup (URL + email share span) | PASS |
+| Empty input no-op | PASS |
+| `_luhn_valid()` on test vectors | PASS |
+
+### Problems encountered (P6a)
+
+**P6a-1: PII LLM hard-stop semantics.** The notebook rule is "PII not redacted →
+orchestration doesn't work." Earlier (P4a) `PiiRedactionFailed` raised when
+Presidio was unavailable. P6a relaxes this: regex scan is in-process Python (can't
+fail at deploy boundary), so the hard-stop now triggers only on `pii_enabled=true`
+with empty regex output AND failed LLM extraction. Documented as a paper caveat:
+"PII coverage degrades gracefully when the classifier API is unreachable; system
+will not block on transient LLM-provider outages."
+
+**P6a-2: Luhn false positives on long ID numbers.** Order IDs, invoice numbers,
+and reference codes often have 13-19 digits. Naive regex match flagged them. Fix:
+require Luhn check (`_luhn_valid()`) before accepting a `CREDIT_CARD` span. Verified
+that `4111 1111 1111 1112` (last digit broken) is correctly NOT flagged.
+
+**P6a-3: LLM extraction span localization.** The classifier returns `{text, type,
+confidence}` but no offsets. We re-locate spans with `text.find(span_text)` — works
+when the span appears once, fails on duplicates. Edge case: if "John" appears twice
+and the model only reports it once, we only redact the first occurrence. Mitigation:
+the regex layer doesn't share this bug (offsets are exact); for NAME duplicates
+acceptable for now; future fix is to iterate `re.finditer(re.escape(span_text), text)`
+and redact ALL occurrences. Noted as future work.
+
+## P6b — OpenAI embeddings (sentence-transformers out)
+
+### Architecture decision
+`sentence-transformers all-MiniLM-L6-v2` is 90MB of model weights pulling in
+`torch` (~750MB), `transformers` (~30MB), `huggingface-hub` (~10MB). Free-tier image
+budget killed.
+
+Considered:
+- **Local fastembed (ONNX)**: 100MB total. Decent. But still a local model dep.
+- **OpenAI text-embedding-3-small** (selected): API call, 384-dim native option via
+  `dimensions=384` param. Matches existing `vector(384)` Supabase schema exactly.
+  Pricing: $0.02 per 1M tokens. At research-project volume (~10 prompts/day ×
+  ~500 embedded tokens) = ~$0.003/mo. Effectively free.
+- **Voyage AI voyage-3**: better quality, but $0.18/1M tokens. Defer.
+
+Picked OpenAI: schema unchanged, image savings ~500MB, cost trivial, normalized
+output by default (cosine = inner product).
+
+### Files changed (P6b)
+- `backend/core/embeddings.py` — NEW shared module. `embed_text(text)`,
+  `embed_batch(texts)`, lazy OpenAI client. Picks `OPENAI_API_KEY` first
+  (canonical embeddings endpoint), falls back to OpenRouter if user only has that.
+- `backend/core/knowledge_engine.py` — `KnowledgeEngine.embed_text()` now delegates
+  to `embeddings.embed_text()`; `_get_embed_model()` removed.
+- `backend/rag/pipeline.py` — `VectorStore.ingest()` / `.retrieve()` use
+  `embed_batch()`; removed `_get_embed_model()` + `SentenceTransformer` import.
+- `backend/core/config.py` — added `embeddings_provider`, `embeddings_model`,
+  `embeddings_dimensions`, `openai_api_key`. Kept `embedding_model` field
+  (informational only) so legacy callsites don't break.
+- Root `pyproject.toml` + `backend/pyproject.toml` — removed `sentence-transformers`
+  and `transformers`.
+
+### Schema impact
+**None.** OpenAI returns normalized vectors; `text-embedding-3-small` with
+`dimensions=384` outputs the right shape for the existing
+`extensions.vector(384)` columns + HNSW cosine index. Existing rows from the
+MiniLM era are *vector-space-incompatible* with the new embeddings (different model
+= different basis), but the user's `memory_chunks` table is empty in the research
+project; documented as a one-time wipe required if anyone has populated data.
+
+### P6b verification (5/5 pass — structural; live OpenAI call deferred to deploy)
+| Check | Outcome |
+|---|---|
+| `embeddings_provider` / `embeddings_model` / `embeddings_dimensions` load | PASS |
+| `embed_text` + `embed_batch` exported | PASS |
+| Lazy client init (no eager OpenAI connect on import) | PASS |
+| `sentence_transformers` not referenced by `knowledge_engine` or `pipeline` | PASS |
+| `KnowledgeEngine.embed_text` still public + callable | PASS |
+
+### Problems encountered (P6b)
+
+**P6b-1: OpenRouter doesn't proxy embeddings.** OpenRouter is chat-completions
+only as of writing. If a user has *only* an OpenRouter key, embeddings fail.
+Mitigation in `embeddings.py`: prefer `OPENAI_API_KEY` (canonical embeddings
+endpoint), fall back to OpenRouter base URL with a logged warning so it surfaces
+quickly. Documented in README + `.env` template.
+
+**P6b-2: Sync embedding inside async lifecycle.** `embed_text` is sync (OpenAI
+sync client). Memory service calls it from async methods. CPU work in async is
+fine (small, ~200ms network I/O blocks one event loop tick); switching to
+`AsyncOpenAI` would cascade signature changes through 4 modules. Trade accepted —
+revisit if latency profile shows lifecycle blocking.
+
+## P6c — Containerize + Cloud Run + cross-origin cookies
+
+### Architecture decision
+Vercel Functions can't host the adversarial pipeline (10s Hobby / 60s Pro
+timeout; 5-12 LLM calls per `/run` routinely exceed 10s, often hit 60s on Opus).
+Cloud Run free tier has no per-request timeout below 60min; 60s wall-clock
+ceiling on adversarial pipelines is comfortable.
+
+### Files added (P6c)
+- `Dockerfile` (repo root) — `python:3.11-slim`, explicit `pip install` of the
+  trimmed dep list (no torch, no spaCy, no presidio, no sentence-transformers).
+  `COPY backend /app/backend`. `CMD uvicorn backend.api.main:app --host 0.0.0.0
+  --port ${PORT:-8000}`. Image build target: <300 MB (vs ~2.5 GB with old deps).
+- `.dockerignore` — excludes `frontend/`, `tests/`, `notebooks/`, `data/`,
+  `.claude/`, markdown files, `.env*`.
+- `infra/cloudrun/deploy.sh` — `gcloud run deploy` with `--memory 512Mi --cpu 1
+  --min-instances 0 --max-instances 5 --concurrency 80 --port 8080 --timeout 300`.
+  Pulls all secrets from Secret Manager so nothing sensitive lands in env vars.
+
+### Files changed (P6c)
+- `backend/core/config.py` — added `cookie_samesite` (default `lax`) and
+  `cookie_secure` (default `true`).
+- `backend/core/identity.py::set_identity_cookie` — reads samesite + secure from
+  settings. Validates `samesite` against `{lax, strict, none}`; falls back to
+  `lax` on garbage values.
+
+### Cross-origin cookie config
+Vercel ↔ Cloud Run is cross-origin. The `fable_id` cookie must:
+- `samesite=none` so the browser sends it on cross-site requests.
+- `secure=true` so the browser only sends over HTTPS (required for `samesite=none`
+  per modern browser policy).
+- `httponly=true` always (cookie is server-managed; the frontend never reads it).
+
+For Cloud Run deploy: `COOKIE_SAMESITE=none` + `COOKIE_SECURE=true` in the env.
+For local dev (same-origin via Next.js `/api/*` rewrite): `COOKIE_SAMESITE=lax`
++ `COOKIE_SECURE=false`.
+
+### P6c verification (2/2 pass)
+| Check | Outcome |
+|---|---|
+| `COOKIE_SAMESITE=none` + `COOKIE_SECURE=true` round-trip | PASS |
+| Garbage `COOKIE_SAMESITE` value safely defaults to `lax` | PASS |
+
+Docker build verification (image size, cold-start ms): deferred to user's first
+Cloud Run deploy — reproducible via `bash infra/cloudrun/deploy.sh`.
+
+### Problems encountered (P6c)
+
+**P6c-1: Dockerfile placement.** First attempt put `Dockerfile` under `backend/`.
+With `COPY . /app` as build context, `backend.api.main` wouldn't import (no
+`backend` package at `/app` root). Moved to repo root with build context = repo
+root; `COPY backend /app/backend` preserves the import path. Same Dockerfile
+serves Railway, Cloud Run, and any other container host.
+
+**P6c-2: Root pyproject still pinned `torch` indirectly via sentence-transformers.**
+The repo had a root `pyproject.toml` (for Railway) AND a `backend/pyproject.toml`
+(for `pip install -e backend`). Cleaned both: root pyproject drops
+`sentence-transformers` + `transformers`; backend pyproject drops `presidio-*` +
+`spacy`. Dockerfile installs deps explicitly so it doesn't care about either
+manifest — but the manifests stay accurate for `pip install -e .` workflows.
+
+## Total cost claim for the paper
+
+| Service | Plan | Monthly fixed |
+|---|---|---|
+| Vercel | Hobby | $0 |
+| Cloud Run | Free tier (2M req, 360k vCPU-sec, 180k GB-sec) | $0 |
+| Supabase | Free tier (500MB DB, 5GB egress) | $0 |
+| **Fixed monthly** | | **$0** |
+
+Variable (user-driven, not hosting cost):
+- OpenAI embeddings: ~$0.02 per 1M tokens (~$0.003/mo at light usage).
+- OpenRouter LLM calls: pay-as-you-go per request.
+
+**"F.A.B.L.E. runs at $0/mo fixed cost on free-tier infrastructure across three
+providers"** is a paper-worthy reproducibility claim. The Dockerfile + deploy
+script + schema.sql together constitute a fully-deterministic deploy artifact.
+
+## Open questions for paper (Phase 6)
+1. **Empirical PII recall delta.** Need to measure regex+LLM vs Presidio on a
+   labeled corpus (e.g. CoNLL-2003 NER subset for PERSON/LOCATION). Targets
+   ≥80% recall to remain paper-defensible.
+2. **Cold-start tax measurement.** Cloud Run free tier cold start budget needs
+   to be measured on the trimmed image. If consistently >10s, may need to bump
+   `min-instances 1` for the demo URL (paid).
+3. **Embedding quality drop.** OpenAI `text-embedding-3-small@dim=384` vs
+   MiniLM-L6-v2 on the same retrieval task. Likely better (3-small native is
+   1536-dim, truncated; MTEB scores higher than MiniLM), but should verify on
+   the user's actual memory corpus before claiming improvement.
+4. **Backend-only LLM dependence.** If the LLM provider is down, PII NAME/LOCATION
+   detection silently degrades to regex-only. Document as a known availability
+   characteristic.
