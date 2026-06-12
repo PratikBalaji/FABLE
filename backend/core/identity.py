@@ -75,7 +75,6 @@ def set_identity_cookie(response: Response, identity_id: str) -> None:
     deploy (Vercel frontend ↔ Cloud Run backend → samesite="none", secure=true).
     Local dev (same-origin) keeps samesite="lax". Note: `none` requires HTTPS.
     """
-    from typing import Literal, cast
 
     _samesite = (settings.cookie_samesite or "lax").lower()
     if _samesite not in ("lax", "strict", "none"):
