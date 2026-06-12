@@ -1,6 +1,21 @@
 """Unit tests for the RAG pipeline."""
+import numpy as np
 import pytest
+from unittest.mock import patch
+
 from backend.rag.pipeline import VectorStore
+
+
+def _fake_embed_batch(texts: list[str]) -> list[list[float]]:
+    """Deterministic fake embeddings (dim=384) — no API key needed."""
+    rng = np.random.default_rng(42)
+    return [rng.random(384).tolist() for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def _patch_embed(monkeypatch):
+    """Patch embed_batch for all tests in this module — no real API key required."""
+    monkeypatch.setattr("backend.rag.pipeline._api_embed_batch", _fake_embed_batch)
 
 
 @pytest.fixture
