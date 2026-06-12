@@ -74,16 +74,21 @@ class ModelRouter:
         system: str,
         user: str,
         max_tokens: int = 1024,
+        model_override: str | None = None,
     ) -> ModelResponse:
-        model_map = {
-            "adv:planner": settings.planner_model,
-            "adv:actor": settings.actor_model,
-            "adv:critic": settings.adv_critic_model,
-            "adv:validator": settings.validator_model,
-            "adv:refiner": settings.refiner_model,
-            "adv:judge": settings.judge_model,
-        }
-        model = model_map.get(role, settings.primary_model)
+        # ELM-provided model_override takes precedence over static map
+        if model_override:
+            model = model_override
+        else:
+            model_map = {
+                "adv:planner": settings.planner_model,
+                "adv:actor": settings.actor_model,
+                "adv:critic": settings.adv_critic_model,
+                "adv:validator": settings.validator_model,
+                "adv:refiner": settings.refiner_model,
+                "adv:judge": settings.judge_model,
+            }
+            model = model_map.get(role, settings.primary_model)
 
         resp = await self._client.chat.completions.create(
             model=model,

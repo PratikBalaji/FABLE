@@ -667,6 +667,151 @@ Considered:
 - **OpenAI text-embedding-3-small** (selected): API call, 384-dim native option via
   `dimensions=384` param. Matches existing `vector(384)` Supabase schema exactly.
   Pricing: $0.02 per 1M tokens. At research-project volume (~10 prompts/day ×
+  ~500 tokens/prompt) that's ~$0.003/month.
+
+---
+
+## P7 — ELM (Embedded Language Model) for Dynamic Role Declaration
+
+### Problem
+The adversarial pipeline's 6 agent roles have hardcoded system prompts, token budgets,
+and model assignments. This means every task — whether a simple factual lookup or a
+complex multi-step code review — runs through the same agent configurations. Waste of
+tokens on simple tasks; under-configured for complex ones.
+
+### Architecture decision
+A local ONNX model (Phi-3-mini-4k-instruct, INT4 quantized, ~1.7GB) runs as a
+**pre-pipeline phase** before `run_adversarial_task` enters the Planner step. It analyzes
+the task input and domain, then produces a `PipelineDeclaration` — a structured JSON
+config for each role specifying:
+- Task-aware system prompt (2-4 sentences, domain-specific)
+- Model assignment (can re-route roles to different LLMs per task)
+- Token budget (calibrated to task complexity)
+- Activation flag (deactivate unnecessary roles for simple tasks)
+- Execution order (allows pipeline reordering)
+
+### Why Phi-3-mini ONNX?
+- **No PyTorch dependency** — project explicitly dropped torch in P6b to fit <300MB
+  Cloud Run image. `onnxruntime-genai` is ~50MB, no CUDA needed.
+- **Strong structured output** — Phi-3-mini excels at JSON-constrained generation,
+  which is exactly what the meta-prompt requires.
+- **4k context sufficient** — the meta-prompt is ~1500 tokens (truncated task input +
+  role descriptions + schema + rules). Well within the 4k window.
+- **Offline** — the whole point is NOT calling an API for role declaration. The ELM
+  runs locally with zero latency cost per API call.
+
+### Design: thread-safe via TaskContext
+Agents read their ELM declaration from `TaskContext.metadata["elm_declarations"]` at
+call time — no shared state mutation. Each request gets its own `PipelineDeclaration`
+object. This is fully concurrent-safe without per-request agent instantiation.
+
+### Fallback chain
+1. `ELM_ENABLED=false` (default) → static declarations (identical to pre-ELM behavior)
+2. Model file not on disk → static declarations
+3. Inference fails (timeout, ONNX error) → static declarations
+4. Parse fails (malformed JSON) → static declarations
+5. Mandatory role deactivated → re-activated from fallback
+
+### Cache layer
+File-based cache: `sha256(domain + ":" + task_input[:200])` → JSON file. TTL 24h.
+Avoids re-running the ELM for similar sequential tasks in the same domain.
+
+### P7 problems encountered
+
+**P7-1: onnxruntime-genai wheel availability.** The `onnxruntime-genai` package has
+limited platform support (x64 Linux/Windows, some macOS). Made it an optional dependency
+group: `pip install -e ".[elm]"`. The ELM is not in the production Dockerfile — Cloud Run
+doesn't need it (ELM_ENABLED=false by default).
+
+**P7-2: Mandatory role enforcement.** The ELM could theoretically deactivate all roles.
+Hard constraint: `adv:planner`, `adv:actor`, `adv:judge` are always forced active
+regardless of ELM output. Validator/critic/refiner can be deactivated for simple tasks.
+
+---
+
+## P8 — Kubernetes (kind) for Local Adversarial Agent Scaling
+
+### Problem
+All 6 adversarial agents run in-process in a single Python process. For local dev and
+testing, this means: no isolation between agent roles, no independent scaling, no
+ability to test distributed failure modes, and agent-heavy tasks block the API.
+
+### Architecture decision: Grouped pods via kind
+Decompose the monolith into 4 K8s services:
+
+| Service | Agents | Port | Rationale |
+|---------|--------|------|-----------|
+| Coordinator | None (API + lifecycle + ELM) | 8000 | Orchestration hub |
+| Planning pod | Planner + Judge | 8001 | Strategic roles, both Claude |
+| Execution pod | Actor + Refiner | 8002 | Content generation roles |
+| Review pod | Critic + Validator | 8003 | Adversarial review roles |
+
+**Why grouped (not one-per-role)?** 6 separate pods for a local dev cluster is excessive
+overhead. Grouping by function (strategic / generation / review) gives 3 independent
+scaling units while keeping resource usage reasonable. Each group shares a model provider
+connection pool. The execution pod (Actor = highest token budget) is the scaling
+bottleneck — HPA maxReplicas=3 vs 2 for others.
+
+### DistributedAgentBus
+Subclasses the in-process `AgentBus`. Same `dispatch(role, ctx)` API — the lifecycle
+code doesn't change. When `K8S_MODE=true`, dispatch serializes `TaskContext` (stripping
+non-serializable `router`), POSTs to the pod's `/agent/invoke` endpoint, deserializes
+the `AgentMessage` response. Non-adversarial roles fall back to local dispatch.
+
+### Inter-pod communication
+HTTP/JSON over K8s ClusterIP services (not gRPC). Project already uses httpx + FastAPI
+everywhere — adding protobuf compilation is unnecessary complexity for a research project.
+120s timeout on agent invocations (LLM calls can take 30-60s on large token budgets).
+
+### Serialization challenge
+`TaskContext.metadata["router"]` contains a `ModelRouter` instance (async OpenAI client).
+Not serializable. Solution: strip `router` before transport, each pod creates its own
+`ModelRouter` from the shared ConfigMap/Secret environment. The `ELM declarations` are
+serialized via `PipelineDeclaration.to_dict()` / `from_dict()`.
+
+### Backward compatibility
+`K8S_MODE=false` (default) → everything works exactly as before. Standard in-process
+`AgentBus`, no HTTP dispatch, no serialization overhead. Cloud Run production deployment
+unchanged. Docker-compose local dev unchanged.
+
+### Production scaling path (future work)
+The current K8s setup targets local dev via `kind`. For production:
+
+1. **GKE Autopilot** — migrate from Cloud Run. Same container images, GKE Autopilot
+   handles node provisioning. The K8s manifests in `infra/k8s/` need a `production`
+   overlay with:
+   - Higher replica counts (execution-pod: 3-5, planning-pod: 2-3, review-pod: 2-3)
+   - Resource requests/limits calibrated to actual usage (Cloud Run metrics)
+   - Ingress controller (nginx or GKE default) replacing NodePort
+   - Managed certificates (cert-manager or GKE managed certs)
+   - Workload Identity for GCP Secret Manager access (replacing env-file secrets)
+
+2. **Pod autoscaling refinements:**
+   - Custom metrics HPA based on pending LLM request queue depth (not just CPU)
+   - Scale-to-zero with KEDA for cost efficiency during idle periods
+   - Pod Disruption Budgets (at least 1 pod per group always available)
+
+3. **Observability:**
+   - Structured logs already via structlog → ship to Cloud Logging
+   - OpenTelemetry tracing across coordinator → agent pods (trace the full adversarial
+     pipeline per request)
+   - Prometheus metrics endpoint per pod for HPA custom metrics
+
+4. **Cost projection:**
+   - GKE Autopilot: ~$75/mo for a small cluster (3 node pools, e2-medium)
+   - vs Cloud Run: $0/mo (free tier) — significant cost jump
+   - Justified when: concurrent adversarial runs > 5, or response latency SLA < 10s
+
+### P8 problems encountered
+
+**P8-1: Circular import on bus creation.** `bus.py` imports `config.py` for `settings.k8s_mode`,
+but `config.py` was imported before `bus.py` in several modules. Solution: lazy import
+inside `_create_bus()` function — `from .config import settings` only when needed.
+
+**P8-2: Agent registration in agent pods.** The pod's `agent_service.py` can't import
+the full app (`backend.api.main`) — too many deps (supabase, faiss, etc.). Solution:
+minimal FastAPI app that only imports `backend.agents.adversarial` and
+`backend.router.model_router`. The agent-group Dockerfile installs a reduced dep set.
   ~500 embedded tokens) = ~$0.003/mo. Effectively free.
 - **Voyage AI voyage-3**: better quality, but $0.18/1M tokens. Defer.
 

@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fable
+
+resources:
+  - namespace.yaml
+  # Shared config
+  - shared/configmap-models.yaml
+  - shared/secret-api-keys.yaml
+  - shared/hpa-planning.yaml
+  - shared/hpa-execution.yaml
+  - shared/hpa-review.yaml
+  # Coordinator
+  - coordinator/deployment.yaml
+  - coordinator/service.yaml
+  # Agent pods
+  - planning-pod/deployment.yaml
+  - planning-pod/service.yaml
+  - execution-pod/deployment.yaml
+  - execution-pod/service.yaml
+  - review-pod/deployment.yaml
+  - review-pod/service.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: fable

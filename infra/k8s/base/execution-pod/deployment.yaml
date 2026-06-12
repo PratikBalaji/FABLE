@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: execution-pod
+  namespace: fable
+  labels:
+    app: execution-pod
+    app.kubernetes.io/part-of: fable
+    fable.role-group: execution
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: execution-pod
+  template:
+    metadata:
+      labels:
+        app: execution-pod
+    spec:
+      containers:
+        - name: agents
+          image: fable-agent-group:local
+          ports:
+            - containerPort: 8002
+          env:
+            - name: AGENT_ROLES
+              value: "adv:actor,adv:refiner"
+            - name: AGENT_PORT
+              value: "8002"
+          envFrom:
+            - configMapRef:
+                name: model-config
+            - secretRef:
+                name: api-keys
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10

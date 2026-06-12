@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Local dev: single replica, lower resource limits
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: planning-pod
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: agents
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: 250m
+                    memory: 256Mi
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: execution-pod
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: agents
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: 250m
+                    memory: 256Mi
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: review-pod
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: agents
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 128Mi
+                  limits:
+                    cpu: 250m
+                    memory: 256Mi

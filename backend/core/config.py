@@ -94,6 +94,33 @@ class Settings(BaseSettings):
     memory_abstraction_enabled: bool = Field(default=True, alias="MEMORY_ABSTRACTION_ENABLED")
     memory_abstraction_model: str = Field(default="openai/gpt-4o-mini", alias="MEMORY_ABSTRACTION_MODEL")
 
+    # ELM (Embedded Language Model) — dynamic role declaration for adversarial pipeline
+    elm_enabled: bool = Field(default=False, alias="ELM_ENABLED")
+    elm_model_path: str = Field(default="./data/models/phi-3-mini", alias="ELM_MODEL_PATH")
+    elm_max_tokens: int = Field(default=1024, alias="ELM_MAX_TOKENS")
+    elm_cache_dir: str = Field(default="./data/elm_cache", alias="ELM_CACHE_DIR")
+    elm_cache_ttl_hours: int = Field(default=24, alias="ELM_CACHE_TTL_HOURS")
+
+    # Kubernetes distributed mode (local dev only; production stays Cloud Run)
+    k8s_mode: bool = Field(default=False, alias="K8S_MODE")
+    k8s_service_registry: str = Field(
+        default='{"planning":"http://planning-pod:8001","execution":"http://execution-pod:8002","review":"http://review-pod:8003"}',
+        alias="K8S_SERVICE_REGISTRY",
+    )
+
+    @property
+    def k8s_services(self) -> dict[str, str]:
+        """Parse K8S_SERVICE_REGISTRY JSON string into dict."""
+        import json
+        try:
+            return json.loads(self.k8s_service_registry)
+        except (json.JSONDecodeError, TypeError):
+            return {
+                "planning": "http://planning-pod:8001",
+                "execution": "http://execution-pod:8002",
+                "review": "http://review-pod:8003",
+            }
+
     @property
     def resolved_jwks_url(self) -> str:
         if self.supabase_jwks_url:

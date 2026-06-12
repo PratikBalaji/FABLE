@@ -1,0 +1,46 @@
+# F.A.B.L.E. Agent Group Pod — K8s mode.
+# Runs a minimal FastAPI service hosting one or more adversarial agent roles.
+# Which roles this pod serves is configured via AGENT_ROLES env var.
+#
+# Examples:
+#   AGENT_ROLES=adv:planner,adv:judge     → planning pod
+#   AGENT_ROLES=adv:actor,adv:refiner     → execution pod
+#   AGENT_ROLES=adv:critic,adv:validator  → review pod
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+
+# Agent pods need fewer deps than the coordinator (no faiss, no supabase, etc.)
+# but we keep the same base for simplicity and layer caching.
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install \
+        "openai>=1.30.0" \
+        "fastapi>=0.111.0" \
+        "uvicorn[standard]>=0.30.0" \
+        "pydantic>=2.7.0" \
+        "pydantic-settings>=2.3.0" \
+        "httpx>=0.27.0" \
+        "numpy" \
+        "structlog>=24.2.0"
+
+COPY backend/ ./backend/
+
+# AGENT_ROLES and AGENT_PORT must be set at runtime
+ENV AGENT_PORT=8001
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:${AGENT_PORT}/health || exit 1
+
+CMD ["sh", "-c", "uvicorn backend.agents.agent_service:app --host 0.0.0.0 --port ${AGENT_PORT:-8001}"]
