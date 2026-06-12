@@ -29,18 +29,36 @@ class BaseAdversarialAgent(BaseAgent):
     """
     Base for all adversarial pipeline agents.
     Routes to role-specific LLM and embeds round metadata in the message.
+
+    When ELM declarations are present in TaskContext.metadata["elm_declarations"],
+    the agent reads its own RoleDeclaration for task-aware system_prompt, token_budget,
+    and model_assignment. Falls back to class-level defaults when no declaration exists.
     """
+
+    def _get_declaration(self, ctx: TaskContext):
+        """Look up this agent's ELM declaration from TaskContext, if present."""
+        pipeline_decl = ctx.metadata.get("elm_declarations")
+        if pipeline_decl is None:
+            return None
+        return pipeline_decl.get_declaration(self.role)
 
     async def __call__(self, ctx: TaskContext) -> AgentMessage:
         prompt = self.build_prompt(ctx)
-        max_tok = _TOKEN_BUDGETS.get(self.role, 1024)
+
+        # ELM-aware: read dynamic declaration if available, else static defaults
+        decl = self._get_declaration(ctx)
+        system = decl.system_prompt if decl else self.system_prompt
+        max_tok = decl.token_budget if decl else _TOKEN_BUDGETS.get(self.role, 1024)
+        model_override = decl.model_assignment if decl else None
+
         # Per-user router (multi-user mode) wins; fall back to the registration-time singleton.
         router = ctx.metadata.get("router") or self.router
         response = await router.complete_for_role(
             role=self.role,
-            system=self.system_prompt,
+            system=system,
             user=prompt,
             max_tokens=max_tok,
+            model_override=model_override,
         )
         return AgentMessage(
             role=self.role,
@@ -49,6 +67,7 @@ class BaseAdversarialAgent(BaseAgent):
                 "model": response.model,
                 "usage": response.usage,
                 "round": ctx.metadata.get("adversarial_round", 0),
+                "elm_driven": decl is not None,
             },
         )
 

@@ -22,7 +22,9 @@ frontend/
       ui/       # Shared dark-theme components
 
 infra/
-  docker/       # Compose + Dockerfiles
+  docker/       # Compose + Dockerfiles (incl. K8s coordinator/agent-group)
+  k8s/          # Kubernetes manifests (kind local dev)
+  cloudrun/     # GCP Cloud Run deployment
   aws/          # CDK / Terraform stubs
 
 notebooks/      # Kaggle-ready .ipynb exports
@@ -38,6 +40,8 @@ notebooks/      # Kaggle-ready .ipynb exports
 | 4 | Domain Implementations — Code Review + Finance |
 | 5 | UI + Export — Obsidian-style UI, knowledge graph, Kaggle .ipynb |
 | 6 | Evaluation + Polish — benchmarks, demo, docs |
+| 7 | ELM — Embedded Language Model for dynamic adversarial role declaration |
+| 8 | K8s — Kubernetes (kind) for local containerized agent scaling |
 
 ## Quick Start
 
@@ -122,3 +126,46 @@ Apply `infra/supabase/schema.sql` via the Supabase SQL Editor. The file is idemp
 ### Trimmed image
 
 The Cloud Run image excludes Presidio, spaCy, `sentence-transformers`, and `torch` to fit the free tier comfortably (<300 MB). PII redaction uses regex + a small LLM call (P6a); embeddings call OpenAI directly (P6b).
+
+## ELM — Dynamic Role Declaration (P7)
+
+An optional local ONNX model (Phi-3-mini, ~1.7GB) that dynamically generates system prompts, token budgets, and model assignments for each adversarial agent role based on task context. Disabled by default.
+
+```bash
+# Install ELM dependencies
+pip install -e ".[elm]"
+
+# Download the model (~1.7GB)
+python scripts/download_elm_model.py
+
+# Enable
+export ELM_ENABLED=true
+export ELM_MODEL_PATH=./data/models/phi-3-mini/cpu_and_mobile/cpu-int4-rtn-block-32
+```
+
+When disabled (`ELM_ENABLED=false`, the default), the pipeline uses the same hardcoded role declarations as before — zero behavior change.
+
+## Kubernetes — Local Agent Scaling (P8)
+
+Run adversarial agents as containerized pods locally via [kind](https://kind.sigs.k8s.io/):
+
+```
+Coordinator (API + lifecycle) ──HTTP──→ Planning Pod (Planner + Judge)
+                               ──HTTP──→ Execution Pod (Actor + Refiner)
+                               ──HTTP──→ Review Pod (Critic + Validator)
+```
+
+Each pod group scales independently via HPA. Prerequisites: Docker, kind, kubectl.
+
+```bash
+# One-command setup
+./infra/k8s/setup.sh
+
+# Access
+curl http://localhost:8000/health
+
+# Tear down
+./infra/k8s/teardown.sh
+```
+
+Production stays on Cloud Run (`K8S_MODE=false` default). See RESEARCH_LOG.md P8 for the GKE Autopilot production scaling path.
