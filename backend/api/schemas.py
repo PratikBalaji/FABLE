@@ -60,6 +60,19 @@ class RunResponse(BaseModel):
     knowledge_graph: GraphState
 
 
+class AdversarialMeta(BaseModel):
+    rounds_completed: int = 0
+    max_rounds: int = 2
+    judge_verdict: str = "UNKNOWN"
+    judge_score: float = 0.0
+    judge_rationale: str = ""
+    unresolved_issues: list[str] = []
+
+
+class AdversarialRunResponse(RunResponse):
+    adversarial_meta: AdversarialMeta = Field(default_factory=AdversarialMeta)
+
+
 class IngestRequest(BaseModel):
     text: str
     source: str = "manual"
