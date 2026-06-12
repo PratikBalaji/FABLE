@@ -4,7 +4,18 @@ from backend.rag.pipeline import VectorStore
 
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path, monkeypatch):
+    def fake_embed_batch(texts):
+        return [
+            [
+                float(len(text)),
+                float(text.lower().count("python") + text.lower().count("fastapi")),
+                float(sum(ord(ch) for ch in text) % 997),
+            ]
+            for text in texts
+        ]
+
+    monkeypatch.setattr("backend.rag.pipeline._api_embed_batch", fake_embed_batch)
     return VectorStore(store_path=str(tmp_path / "vs"))
 
 
