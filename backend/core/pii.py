@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import structlog
@@ -63,7 +64,7 @@ class RedactionResult:
 # ---------------------------------------------------------------------------
 
 # Each entry: (entity_type, compiled regex, optional validator(match)->bool)
-_REGEX_PATTERNS: list[tuple[str, re.Pattern, callable]] = [
+_REGEX_PATTERNS: list[tuple[str, re.Pattern[str], Callable[[re.Match[str]], bool]]] = [
     (
         "EMAIL_ADDRESS",
         re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),

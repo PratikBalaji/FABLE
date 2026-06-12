@@ -23,7 +23,6 @@ from typing import Any
 
 import numpy as np
 
-from .config import settings
 from .embeddings import embed_text as _api_embed_text
 
 
