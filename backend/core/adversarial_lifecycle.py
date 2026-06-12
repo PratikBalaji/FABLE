@@ -23,13 +23,35 @@ from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
 from .memory_service import memory_service
 from ..evaluation.rubric import score as rubric_score
+from ..elm.fallback import static_declarations
 from ..router.model_router import ModelRouter
 from .config import settings
 
 log = structlog.get_logger()
 
-# Roles dispatched once per round (excluding Planner)
+# Default roles dispatched once per round (excluding Planner).
+# When ELM is active, this is replaced by PipelineDeclaration.active_round_roles().
 _ROUND_ROLES = ["adv:actor", "adv:critic", "adv:validator", "adv:refiner", "adv:judge"]
+
+
+def _get_declarations(input_text: str, domain: str):
+    """
+    Generate pipeline declarations via ELM (if enabled) or static fallback.
+
+    Returns a PipelineDeclaration with role configs and the active round roles list.
+    """
+    if settings.elm_enabled:
+        try:
+            from ..elm.engine import get_elm_engine
+            elm = get_elm_engine()
+            if elm is not None:
+                declarations = elm.generate_declarations(input_text, domain)
+                log.info("elm_declarations_generated", domain=domain, model=declarations.elm_model)
+                return declarations
+        except Exception:
+            log.warning("elm_fallback", reason="inference_failed", exc_info=True)
+
+    return static_declarations(domain=domain, task_input=input_text)
 
 
 async def run_adversarial_task(
@@ -75,6 +97,9 @@ async def run_adversarial_task(
                 lines.append(run_info["output"][:300])
             context_block = "\n\n".join(lines)
 
+    # Generate ELM declarations (or static fallback)
+    declarations = _get_declarations(input_text, domain)
+
     task_ctx = TaskContext(
         task_id=task_id,
         domain=domain,
@@ -84,8 +109,12 @@ async def run_adversarial_task(
             "adversarial_max_rounds": max_rounds,
             "adversarial_round": 0,
             "router": router,  # per-user router; None => agents use singleton fallback
+            "elm_declarations": declarations,
         },
     )
+
+    # Use ELM-driven round roles if available, else static default
+    round_roles = declarations.active_round_roles() or _ROUND_ROLES
 
     all_messages: list[AgentMessage] = []
     judge_result: dict = {}
@@ -101,7 +130,7 @@ async def run_adversarial_task(
         task_ctx.metadata["adversarial_round"] = round_num
         log.info("adversarial_round_start", task_id=task_id, round=round_num + 1, max=max_rounds)
 
-        for role in _ROUND_ROLES:
+        for role in round_roles:
             msg = await bus.dispatch(role, task_ctx)
             all_messages.append(msg)
 

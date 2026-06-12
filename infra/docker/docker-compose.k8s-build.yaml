@@ -1,0 +1,17 @@
+# Build images for kind cluster loading.
+# Usage: docker compose -f infra/docker/docker-compose.k8s-build.yaml build
+# Then: kind load docker-image fable-coordinator:local fable-agent-group:local --name fable
+version: "3.8"
+
+services:
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.coordinator
+    image: fable-coordinator:local
+
+  agent-group:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent-group
+    image: fable-agent-group:local

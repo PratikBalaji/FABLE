@@ -68,4 +68,17 @@ class AgentBus:
         return results
 
 
-bus = AgentBus()
+def _create_bus() -> AgentBus:
+    """Select bus implementation based on config. K8s mode uses distributed HTTP dispatch."""
+    from .config import settings
+
+    if settings.k8s_mode:
+        from .bus_distributed import DistributedAgentBus
+
+        log.info("bus_distributed_mode", services=settings.k8s_services)
+        return DistributedAgentBus(settings.k8s_services)
+
+    return AgentBus()
+
+
+bus = _create_bus()

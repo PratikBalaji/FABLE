@@ -1,0 +1,48 @@
+# F.A.B.L.E. Coordinator — K8s mode.
+# Runs the FastAPI app + adversarial lifecycle orchestrator.
+# Agents are NOT registered locally — they live in agent pods.
+# The DistributedAgentBus dispatches to pods via HTTP.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    K8S_MODE=true
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install \
+        "openai>=1.30.0" \
+        "fastapi>=0.111.0" \
+        "uvicorn[standard]>=0.30.0" \
+        "pydantic>=2.7.0" \
+        "pydantic-settings>=2.3.0" \
+        "httpx>=0.27.0" \
+        "faiss-cpu==1.9.0.post1" \
+        "numpy" \
+        "supabase>=2.5.0" \
+        "structlog>=24.2.0" \
+        "PyJWT[crypto]>=2.8.0" \
+        "itsdangerous>=2.2.0" \
+        "cryptography>=41.0.0" \
+        "python-multipart>=0.0.9" \
+        "aiofiles>=23.2.1" \
+        "nbformat>=5.10.0"
+
+COPY backend/ ./backend/
+
+ENV PORT=8000
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["sh", "-c", "uvicorn backend.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

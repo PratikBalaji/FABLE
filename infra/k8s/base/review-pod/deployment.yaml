@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-pod
+  namespace: fable
+  labels:
+    app: review-pod
+    app.kubernetes.io/part-of: fable
+    fable.role-group: review
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: review-pod
+  template:
+    metadata:
+      labels:
+        app: review-pod
+    spec:
+      containers:
+        - name: agents
+          image: fable-agent-group:local
+          ports:
+            - containerPort: 8003
+          env:
+            - name: AGENT_ROLES
+              value: "adv:critic,adv:validator"
+            - name: AGENT_PORT
+              value: "8003"
+          envFrom:
+            - configMapRef:
+                name: model-config
+            - secretRef:
+                name: api-keys
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 5
+            periodSeconds: 10

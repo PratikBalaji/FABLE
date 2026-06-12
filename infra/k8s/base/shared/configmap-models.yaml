@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-config
+  namespace: fable
+data:
+  # Standard pipeline
+  PRIMARY_MODEL: "anthropic/claude-sonnet-4"
+  SECONDARY_MODEL: "openai/gpt-4o-mini"
+  CRITIC_MODEL: "openai/gpt-4o-mini"
+  # Adversarial pipeline role-to-model mapping
+  PLANNER_MODEL: "anthropic/claude-sonnet-4-5"
+  ACTOR_MODEL: "openai/gpt-4o"
+  ADV_CRITIC_MODEL: "meta-llama/llama-3-70b-instruct"
+  VALIDATOR_MODEL: "google/gemini-pro-1.5"
+  REFINER_MODEL: "meta-llama/llama-3-70b-instruct"
+  JUDGE_MODEL: "anthropic/claude-sonnet-4-5"
+  # Pipeline config
+  ADVERSARIAL_MAX_ROUNDS: "2"
+  # ELM (disabled by default in K8s; coordinator only)
+  ELM_ENABLED: "false"
+  # OpenRouter
+  OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"

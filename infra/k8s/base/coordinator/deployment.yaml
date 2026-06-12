@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: fable
+  labels:
+    app: coordinator
+    app.kubernetes.io/part-of: fable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordinator
+  template:
+    metadata:
+      labels:
+        app: coordinator
+    spec:
+      containers:
+        - name: coordinator
+          image: fable-coordinator:local
+          ports:
+            - containerPort: 8000
+          env:
+            - name: K8S_MODE
+              value: "true"
+            - name: K8S_SERVICE_REGISTRY
+              value: '{"planning":"http://planning-pod:8001","execution":"http://execution-pod:8002","review":"http://review-pod:8003"}'
+          envFrom:
+            - configMapRef:
+                name: model-config
+            - secretRef:
+                name: api-keys
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
