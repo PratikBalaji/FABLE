@@ -75,6 +75,10 @@ class ELMEngine:
         if not self._ensure_loaded():
             raise RuntimeError("ELM model not available")
 
+        # _ensure_loaded() guarantees these are set; assert satisfies mypy
+        assert self._tokenizer is not None
+        assert self._model is not None
+
         import onnxruntime_genai as og
 
         tokens = self._tokenizer.encode(prompt)

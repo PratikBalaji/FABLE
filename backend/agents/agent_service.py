@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException
@@ -69,7 +70,8 @@ async def _register_pod_agents() -> None:
         ValidatorAgent,
     )
 
-    role_to_class = {
+    # Annotated as Any so mypy doesn't infer the abstract base type
+    role_to_class: dict[str, Any] = {
         "adv:planner": PlannerAgent,
         "adv:actor": ActorAgent,
         "adv:critic": AdversarialCriticAgent,
@@ -81,8 +83,7 @@ async def _register_pod_agents() -> None:
     for role in CONFIGURED_ROLES:
         cls = role_to_class.get(role)
         if cls:
-            agent = cls()
-            agent.router = _pod_router
+            agent = cls(_pod_router)
             _pod_bus.register(role, agent)
             log.info("agent_pod_registered", role=role)
         else:
