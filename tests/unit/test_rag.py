@@ -5,7 +5,7 @@ from backend.rag.pipeline import VectorStore
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    def fake_embed_batch(texts):
+    def deterministic_embed_batch(texts):
         return [
             [
                 float(len(text)),
@@ -15,7 +15,7 @@ def store(tmp_path, monkeypatch):
             for text in texts
         ]
 
-    monkeypatch.setattr("backend.rag.pipeline._api_embed_batch", fake_embed_batch)
+    monkeypatch.setattr("backend.rag.pipeline._api_embed_batch", deterministic_embed_batch)
     return VectorStore(store_path=str(tmp_path / "vs"))
 
 
