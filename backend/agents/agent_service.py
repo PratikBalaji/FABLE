@@ -11,10 +11,11 @@ Usage:
 from __future__ import annotations
 
 import os
+import secrets
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
 from ..core.bus import AgentBus
@@ -92,9 +93,28 @@ async def _register_pod_agents() -> None:
     log.info("agent_pod_ready", roles=CONFIGURED_ROLES)
 
 
+def _verify_internal_token(x_internal_token: str = Header(default="")) -> None:
+    """F-029: Only the coordinator (which knows AGENT_INTERNAL_TOKEN) may call this endpoint."""
+    from ..core.config import settings
+
+    expected = settings.agent_internal_token
+    if not expected:
+        # Token not configured — pod is unsecured; log loudly but allow (avoids hard-breaking
+        # existing local dev setups). Set AGENT_INTERNAL_TOKEN in production.
+        log.warning("agent_pod_no_internal_token", msg="AGENT_INTERNAL_TOKEN not set; endpoint is open")
+        return
+    if not secrets.compare_digest(x_internal_token, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal token")
+
+
 @app.post("/agent/invoke", response_model=InvokeResponse)
-async def invoke_agent(req: InvokeRequest) -> InvokeResponse:
-    """Invoke an agent on this pod."""
+async def invoke_agent(
+    req: InvokeRequest,
+    x_internal_token: str = Header(default=""),
+) -> InvokeResponse:
+    """Invoke an agent on this pod. Requires X-Internal-Token header (F-029)."""
+    _verify_internal_token(x_internal_token)
+
     if req.role not in CONFIGURED_ROLES:
         raise HTTPException(
             status_code=404,
@@ -111,7 +131,8 @@ async def invoke_agent(req: InvokeRequest) -> InvokeResponse:
         raise HTTPException(status_code=404, detail=f"No agent registered for role '{req.role}'")
     except Exception as exc:
         log.error("agent_pod_invoke_error", role=req.role, error=str(exc), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc))
+        # F-017: never leak raw exception detail to caller
+        raise HTTPException(status_code=500, detail="Agent invocation failed")
 
     return InvokeResponse(agent_message=serialize_agent_message(msg))
 

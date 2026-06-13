@@ -17,6 +17,7 @@ import structlog
 from .config import settings
 from .db import get_db, match_memory_chunks, vector_literal
 from .knowledge_engine import knowledge_engine
+from .pii import abstract_for_memory
 
 log = structlog.get_logger()
 
@@ -63,10 +64,14 @@ class MemoryService:
         model_used: str | None = None,
         scores: dict[str, float] | None = None,
         adversarial_run_id: str | None = None,
+        router=None,
     ) -> str | None:
         try:
             db = get_db()
-            emb = self._embed(content)
+            # F-010: abstract before embedding — satisfies "no raw PII in memory_chunks" invariant.
+            # chat_messages keeps original redacted text for display; memory_chunks gets abstracted.
+            abstract_content = await abstract_for_memory(content, scores, router)
+            emb = self._embed(abstract_content)
             res = (
                 db.table("chat_messages")
                 .insert(
@@ -85,7 +90,7 @@ class MemoryService:
             )
             msg_id = res.data[0]["id"] if res.data else None
             self._store_chunk(
-                user_id, "chat_turn", msg_id, session_id, None, content,
+                user_id, "chat_turn", msg_id, session_id, None, abstract_content,
                 emb, {"role": role, "model": model_used},
             )
             db.table("chat_sessions").update(
@@ -110,6 +115,7 @@ class MemoryService:
         pipeline: list[str] | None,
         model_used: str | None,
         messages: list[dict[str, Any]],
+        router=None,
     ) -> str | None:
         try:
             db = get_db()
@@ -157,10 +163,13 @@ class MemoryService:
                 db.table("adversarial_messages").insert(rows).execute()
 
             if final_output:
-                emb = self._embed(f"{input_text}\n\n{final_output}")
+                # F-010: abstract combined transcript before embedding
+                raw_for_abstract = f"{input_text}\n\n{final_output}"
+                abstract_content = await abstract_for_memory(raw_for_abstract, scores, router)
+                emb = self._embed(abstract_content)
                 self._store_chunk(
                     user_id, "adversarial_final", run_id, session_id, domain,
-                    final_output, emb,
+                    abstract_content, emb,
                     {"task_id": task_id, "verdict": adversarial_meta.get("judge_verdict")},
                 )
             return run_id

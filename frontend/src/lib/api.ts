@@ -8,6 +8,10 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ? "/api" : "http://localhost:8000";
 const api = axios.create({
   baseURL: BASE,
   timeout: 120_000, // 120s covers Cloud Run cold start + multi-LLM pipeline
+  withCredentials: true,  // send identity cookie on cross-origin requests (F-008 CORS fix)
+  headers: {
+    "X-FABLE-Request": "1",  // CSRF protection header (F-008)
+  },
 });
 
 // Map raw network errors to user-readable messages
@@ -120,5 +124,16 @@ export async function getGraph(): Promise<GraphState> {
 
 export async function ingestText(text: string, source = "manual"): Promise<{ chunks_added: number }> {
   const { data } = await api.post("/ingest", { text, source });
+  return data;
+}
+
+export async function ingestFile(file: File, source?: string): Promise<{ chunks_added: number; source: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("source", source ?? file.name);
+  const { data } = await api.post<{ chunks_added: number; source: string }>("/ingest/file", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 60_000,
+  });
   return data;
 }

@@ -60,6 +60,8 @@ async def run_task(
         metadata={
             "retrieved_context": context_block,
             "recommended_model": best_model,
+            "user_id": user_id,
+            "_guardrail_checked": True,  # F-018: pre_check already ran above
         },
     )
 
