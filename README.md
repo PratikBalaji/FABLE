@@ -1,4 +1,4 @@
-# F.A.B.L.E. — Framework of Adversarial Benchmarking & Logic Engine 
+# FABLE — Framework For Adversarial Benchmarking & Logic Engine 
 
 Multi-agent orchestration platform coordinating Claude + auxiliary LLMs across domain-specific collaborative workflows, with RAG, evaluation, an Obsidian-style UI, and Kaggle notebook export.
 
