@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
+import { motion, AnimatePresence } from "framer-motion";
+import { Upload, X, FileText, File } from "lucide-react";
 import AgentThread from "@/components/panels/AgentThread";
 import WarRoom from "@/components/panels/WarRoom";
 import { SegmentedToggle } from "@/components/ui/SegmentedToggle";
@@ -8,6 +10,7 @@ import {
   runTask,
   runAdversarialTask,
   getGraph,
+  ingestFile,
   type AgentMessage,
   type RunResponse,
   type AdversarialRunResponse,
@@ -34,19 +37,48 @@ const VIEW_OPTIONS = [
   { value: "thread" as View, label: "Thread" },
 ];
 
+// ─── Uploaded file chip ───────────────────────────────────────────────────────
+function FileChip({ name, onRemove }: { name: string; onRemove: () => void }) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const icon =
+    ext === "pdf" ? (
+      <FileText size={10} className="text-red" />
+    ) : ext === "docx" || ext === "doc" ? (
+      <FileText size={10} className="text-blue" />
+    ) : (
+      <File size={10} className="text-subtext" />
+    );
+
+  return (
+    <motion.span
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.8 }}
+      className="inline-flex items-center gap-1 glass-surface px-2 py-1 rounded-full text-[10px] font-mono text-subtext max-w-[160px]"
+    >
+      {icon}
+      <span className="truncate">{name}</span>
+      <button onClick={onRemove} className="text-overlay hover:text-red transition-colors ml-0.5">
+        <X size={10} />
+      </button>
+    </motion.span>
+  );
+}
+
 // ─── Score bar ────────────────────────────────────────────────────────────────
 function ScoreBar({ label, value }: { label: string; value: number }) {
   const pct = Math.round(value * 100);
-  const color =
-    pct >= 80 ? "#a6e3a1" : pct >= 50 ? "#f9e2af" : "#f38ba8";
-
+  const color = pct >= 80 ? "#a6e3a1" : pct >= 50 ? "#f9e2af" : "#f38ba8";
   return (
     <div className="flex items-center gap-2 text-xs font-mono">
       <span className="text-overlay w-20 truncate">{label}</span>
       <div className="flex-1 h-1 bg-surface0/60 rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-700 ease-out"
-          style={{ width: `${pct}%`, background: color, boxShadow: `0 0 6px ${color}80` }}
+        <motion.div
+          className="h-full rounded-full"
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.7, ease: "easeOut" }}
+          style={{ background: color, boxShadow: `0 0 6px ${color}80` }}
         />
       </div>
       <span className="w-7 text-right" style={{ color }}>{pct}%</span>
@@ -58,7 +90,9 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
 function JudgeChip({ meta }: { meta: AdversarialMeta }) {
   const accepted = meta.judge_verdict === "ACCEPT";
   return (
-    <span
+    <motion.span
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
       className={cn(
         "text-[10px] font-mono px-2 py-0.5 rounded-full border",
         accepted
@@ -69,7 +103,7 @@ function JudgeChip({ meta }: { meta: AdversarialMeta }) {
     >
       {accepted ? "✓ ACCEPT" : "✗ REJECT"} {Math.round(meta.judge_score * 100)}%
       {meta.rounds_completed > 0 && ` · ${meta.rounds_completed}r`}
-    </span>
+    </motion.span>
   );
 }
 
@@ -86,11 +120,48 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("standard");
   const [activeView, setActiveView] = useState<View>("graph");
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     getGraph().then(setGraphState).catch(() => {});
   }, []);
 
+  // ─── File handling ─────────────────────────────────────────────────────────
+  const handleFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const newFiles = Array.from(files);
+    setUploadedFiles((prev) => [...prev, ...newFiles]);
+
+    // Upload each file immediately
+    for (const f of newFiles) {
+      setUploadStatus(`Ingesting ${f.name}…`);
+      try {
+        const result = await ingestFile(f);
+        setUploadStatus(`✓ ${f.name} — ${result.chunks_added} chunks indexed`);
+      } catch {
+        setUploadStatus(`✗ Failed to ingest ${f.name}`);
+      }
+    }
+    setTimeout(() => setUploadStatus(null), 3000);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      handleFiles(e.dataTransfer.files);
+    },
+    [handleFiles]
+  );
+
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+  const removeFile = (idx: number) =>
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== idx));
+
+  // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -118,7 +189,6 @@ export default function Home() {
           setModelUsed(result.model_used);
           setGraphState(result.knowledge_graph);
         }
-        // Auto-switch to War Room after a run so the user sees agents
         if (activeView === "graph") setActiveView("warroom");
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Request failed");
@@ -129,7 +199,6 @@ export default function Home() {
     [input, isLoading, mode, activeView]
   );
 
-  // Enter submits, Shift+Enter adds newline
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -147,18 +216,19 @@ export default function Home() {
 
   return (
     <div className="min-h-screen text-text font-mono flex flex-col">
-      {/* ─── Header ─────────────────────────────────────────────────────────── */}
-      <header className="glass rounded-none border-b border-white/[0.06] px-5 py-2.5 flex items-center gap-4 z-20 relative">
+
+      {/* ─── Header ───────────────────────────────────────────────────────────── */}
+      <header className="glass rounded-none border-b border-white/[0.06] px-5 py-3 flex items-center gap-4 z-20 relative">
         {/* Brand */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col leading-none">
           <span
-            className="font-bold text-lg tracking-wider"
-            style={{ color: "#cba6f7", textShadow: "0 0 20px rgba(203,166,247,0.5)" }}
+            className="font-bold text-xl tracking-[0.15em] uppercase"
+            style={{ color: "#cba6f7", textShadow: "0 0 28px rgba(203,166,247,0.55), 0 0 8px rgba(203,166,247,0.25)" }}
           >
-            F.A.B.L.E.
+            FABLE
           </span>
-          <span className="text-overlay text-[10px] hidden sm:inline font-sans">
-            Federated Agent Bus &amp; Lifecycle Engine
+          <span className="text-[9px] text-overlay/70 font-sans tracking-wide hidden sm:block mt-0.5">
+            Framework for Adversarial Benchmarking and Logic Evaluation
           </span>
         </div>
 
@@ -177,7 +247,9 @@ export default function Home() {
 
         {/* Meta chips — right */}
         <div className="flex items-center gap-2 text-[10px] text-overlay font-mono">
-          {adversarialMeta && <JudgeChip meta={adversarialMeta} />}
+          <AnimatePresence>
+            {adversarialMeta && <JudgeChip key="judge" meta={adversarialMeta} />}
+          </AnimatePresence>
           {modelUsed && (
             <span className="glass-surface px-2 py-0.5 rounded-full">
               {modelUsed.split("/").pop()}
@@ -192,14 +264,23 @@ export default function Home() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* ─── Left sidebar ──────────────────────────────────────────────────── */}
+        {/* ─── Left sidebar ────────────────────────────────────────────────────── */}
         <aside className="w-72 min-w-56 flex flex-col p-3 gap-3 border-r border-white/[0.04] z-10">
+
           {/* Input panel */}
-          <div className="glass flex flex-col gap-3 p-4 flex-1">
+          <div
+            ref={dropRef}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            className="glass flex flex-col gap-3 p-4 flex-1 relative"
+          >
             <h2 className="text-subtext text-[10px] uppercase tracking-widest font-sans flex items-center gap-1.5">
               <span
                 className="inline-block w-1.5 h-1.5 rounded-full"
-                style={{ background: mode === "adversarial" ? "#f38ba8" : "#cba6f7", boxShadow: `0 0 6px currentColor` }}
+                style={{
+                  background: mode === "adversarial" ? "#f38ba8" : "#cba6f7",
+                  boxShadow: "0 0 6px currentColor",
+                }}
               />
               Task Input
             </h2>
@@ -216,7 +297,7 @@ export default function Home() {
                 }
                 className={cn(
                   "flex-1 text-text text-xs rounded-lg px-3 py-2.5 resize-none",
-                  "bg-surface0/30 border transition-all duration-200 min-h-40",
+                  "bg-surface0/30 border transition-all duration-200 min-h-36",
                   "placeholder:text-overlay/50 focus:outline-none",
                   "focus:border-accent/60 focus:bg-surface0/50 focus:shadow-glow",
                   isLoading ? "border-surface1/40 opacity-60" : "border-surface0/60"
@@ -224,15 +305,79 @@ export default function Home() {
                 disabled={isLoading}
               />
 
+              {/* ─── Upload area ─────────────────────────────────────────────── */}
+              <div className="space-y-2">
+                {/* Drop zone / button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed",
+                    "text-[10px] font-sans text-overlay transition-all duration-200",
+                    "border-surface1/60 hover:border-accent/40 hover:text-accent hover:bg-accent/5",
+                    isLoading && "opacity-40 pointer-events-none"
+                  )}
+                >
+                  <Upload size={11} />
+                  Drop or click to attach document
+                  <span className="text-overlay/50">pdf · docx · md · txt</span>
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.docx,.doc,.md,.markdown,.txt,.csv,.json"
+                  className="hidden"
+                  onChange={(e) => handleFiles(e.target.files)}
+                />
+
+                {/* File chips */}
+                <AnimatePresence>
+                  {uploadedFiles.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="flex flex-wrap gap-1"
+                    >
+                      {uploadedFiles.map((f, i) => (
+                        <FileChip key={i} name={f.name} onRemove={() => removeFile(i)} />
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Upload status */}
+                <AnimatePresence>
+                  {uploadStatus && (
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-[10px] font-mono text-subtext/70"
+                    >
+                      {uploadStatus}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+              </div>
+
               {error && (
-                <div className="rounded-lg px-3 py-2 bg-red/10 border border-red/20 text-red text-[10px] font-mono leading-relaxed">
+                <motion.div
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="rounded-lg px-3 py-2 bg-red/10 border border-red/20 text-red text-[10px] font-mono leading-relaxed"
+                >
                   {error}
-                </div>
+                </motion.div>
               )}
 
-              <button
+              <motion.button
                 type="submit"
                 disabled={isLoading || !input.trim()}
+                whileTap={{ scale: 0.97 }}
+                whileHover={{ scale: isLoading || !input.trim() ? 1 : 1.02 }}
                 className={cn(
                   "py-2.5 rounded-lg font-bold text-xs font-sans transition-all duration-200",
                   "disabled:opacity-40 disabled:cursor-not-allowed",
@@ -243,11 +388,11 @@ export default function Home() {
                 )}
               >
                 {isLoading
-                  ? `Running ${mode === "adversarial" ? "adversarial" : ""} agents...`
+                  ? `Running ${mode === "adversarial" ? "adversarial" : ""} agents…`
                   : mode === "adversarial"
                   ? "⚔  Run Adversarial"
                   : "▶  Run Collaboration"}
-              </button>
+              </motion.button>
             </form>
 
             {/* Pipeline indicator */}
@@ -266,14 +411,21 @@ export default function Home() {
           </div>
 
           {/* Scores panel */}
-          {Object.keys(scores).length > 0 && (
-            <div className="glass p-4 space-y-2">
-              <h3 className="text-subtext text-[10px] uppercase tracking-widest font-sans">Scores</h3>
-              {Object.entries(scores).map(([k, v]) => (
-                <ScoreBar key={k} label={k} value={v} />
-              ))}
-            </div>
-          )}
+          <AnimatePresence>
+            {Object.keys(scores).length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="glass p-4 space-y-2"
+              >
+                <h3 className="text-subtext text-[10px] uppercase tracking-widest font-sans">Scores</h3>
+                {Object.entries(scores).map(([k, v]) => (
+                  <ScoreBar key={k} label={k} value={v} />
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Stats */}
           <div className="glass-surface px-4 py-3 text-[10px] text-overlay space-y-1">
@@ -296,18 +448,23 @@ export default function Home() {
               onChange={setActiveView}
               size="sm"
             />
-            {isLoading && (
-              <span className="text-[10px] text-overlay font-mono animate-pulse ml-2">
-                ● agents running...
-              </span>
-            )}
+            <AnimatePresence>
+              {isLoading && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-[10px] text-overlay font-mono ml-2"
+                >
+                  ● agents running…
+                </motion.span>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* View content */}
           <div className="flex-1 overflow-hidden relative">
-            {activeView === "graph" && (
-              <PlanetaryGraph graphState={graphState} />
-            )}
+            {activeView === "graph" && <PlanetaryGraph graphState={graphState} />}
             {activeView === "warroom" && (
               <WarRoom messages={messages} isLoading={isLoading} mode={mode} />
             )}

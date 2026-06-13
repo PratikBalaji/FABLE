@@ -1,6 +1,6 @@
-# F.A.B.L.E. — Framework of Adversarial Benchmarking & Logic Engine 
+# FABLE — Framework for Adversarial Benchmarking and Logic Evaluation
 
-Multi-agent orchestration platform coordinating Claude + auxiliary LLMs across domain-specific collaborative workflows, with RAG, evaluation, an Obsidian-style UI, and Kaggle notebook export.
+Multi-agent adversarial benchmarking platform coordinating frontier LLMs across collaborative and adversarial deliberation workflows, with PII-safe RAG, per-user semantic memory, glassmorphic UI, and Kaggle notebook export.
 
 ## Architecture
 
@@ -34,14 +34,19 @@ notebooks/      # Kaggle-ready .ipynb exports
 
 | Phase | Focus |
 |-------|-------|
-| 1 | Orchestration Core — agent bus, collaboration loop, feedback logging |
-| 2 | RAG Foundation — ingest → chunk → embed → retrieve → cite |
-| 3 | Multi-LLM Support — model router, response normalization |
-| 4 | Domain Implementations — Code Review + Finance |
-| 5 | UI + Export — Obsidian-style UI, knowledge graph, Kaggle .ipynb |
-| 6 | Evaluation + Polish — benchmarks, demo, docs |
-| 7 | ELM — Embedded Language Model for dynamic adversarial role declaration |
-| 8 | K8s — Kubernetes (kind) for local containerized agent scaling |
+| 1 | Orchestration Core — adversarial agent bus, 6-role pipeline, collaboration loop |
+| 2 | Multi-User Platform — Supabase Auth, per-user memory, AES-256-GCM credential encryption |
+| 3 | Guardrails — two-layer safety (rules + Llama-Guard classifier), audit log |
+| 4 | Privacy & Identity — pseudonymous-first identity, PII redact/reinject, entity map |
+| 5 | Deploy ($0/mo) — Presidio→regex+LLM, sentence-transformers→OpenAI, Cloud Run |
+| 6 | ELM — Embedded Language Model (Phi-3 ONNX) for dynamic adversarial role declaration |
+| 7 | K8s — Kubernetes (kind) local agent scaling; 3 pod groups + coordinator |
+| 8 | Security Hardening — 40-finding appsec audit; 10 critical/high patches applied |
+| 9 | Document Upload — PDF/DOCX/MD extraction via pypdf + python-docx; glassmorphic UI |
+
+**Adversarial rounds:** Default `max_rounds = 2` to minimize API cost. Judge terminates early (round 1) when score ≥ 0.80. Configurable up to 3+ via `ADVERSARIAL_MAX_ROUNDS` env var when task complexity and budget warrant; hard ceiling enforced server-side at 10.
+
+**Acronym:** FABLE = **F**ramework for **A**dversarial **B**enchmarking and **L**ogic **E**valuation. *Note:* The codebase uses "Embedded Language Model" for the Phi-3 ONNX role-declaration component (P6/ELM). A separate R&D track explores Extreme Learning Machine as a fast meta-scorer — see RESEARCH_LOG Phase 10.
 
 ## Quick Start
 
@@ -127,7 +132,20 @@ Apply `infra/supabase/schema.sql` via the Supabase SQL Editor. The file is idemp
 
 The Cloud Run image excludes Presidio, spaCy, `sentence-transformers`, and `torch` to fit the free tier comfortably (<300 MB). PII redaction uses regex + a small LLM call (P6a); embeddings call OpenAI directly (P6b).
 
-## ELM — Dynamic Role Declaration (P7)
+## Security — Production Required Variables
+
+Add these to Cloud Run `--set-env-vars` / `--set-secrets` (see `infra/cloudrun/deploy.sh`):
+
+```bash
+CORS_ORIGINS=https://your-vercel-app.vercel.app   # restrict CORS from wildcard
+AGENT_INTERNAL_TOKEN=<base64 32 random bytes>      # coordinator→pod auth (K8s mode)
+RATE_LIMIT_RUN=20/minute                           # per-IP rate limit on /run
+RATE_LIMIT_ADV=5/minute                            # per-IP rate limit on /adversarial-run
+```
+
+See `SECURITY_AUDIT_STATE.md` for the full 40-finding audit report and remaining patch backlog.
+
+## ELM — Dynamic Role Declaration (P6)
 
 An optional local ONNX model (Phi-3-mini, ~1.7GB) that dynamically generates system prompts, token budgets, and model assignments for each adversarial agent role based on task context. Disabled by default.
 
@@ -145,7 +163,7 @@ export ELM_MODEL_PATH=./data/models/phi-3-mini/cpu_and_mobile/cpu-int4-rtn-block
 
 When disabled (`ELM_ENABLED=false`, the default), the pipeline uses the same hardcoded role declarations as before — zero behavior change.
 
-## Kubernetes — Local Agent Scaling (P8)
+## Kubernetes — Local Agent Scaling (P7)
 
 Run adversarial agents as containerized pods locally via [kind](https://kind.sigs.k8s.io/):
 

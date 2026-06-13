@@ -38,7 +38,10 @@ RUN pip install --upgrade pip setuptools wheel \
         "cryptography>=41.0.0" \
         "python-multipart>=0.0.9" \
         "aiofiles>=23.2.1" \
-        "nbformat>=5.10.0"
+        "nbformat>=5.10.0" \
+        "slowapi>=0.1.9" \
+        "pypdf>=4.0.0" \
+        "python-docx>=1.1.0"
 
 # Copy application code.
 COPY backend/ ./backend/
