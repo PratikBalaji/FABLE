@@ -1,4 +1,7 @@
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File, Form, status
+
+log = structlog.get_logger()
 from ..schemas import IngestRequest, IngestResponse
 from ...core.auth import get_optional_user, AuthedUser
 from ...core.config import settings
@@ -68,7 +71,13 @@ async def ingest_file(
         if ident.cookie_to_set:
             set_identity_cookie(response, ident.cookie_to_set)
 
-    text = content.decode("utf-8", errors="ignore")
+    from ...rag.extract import extract as extract_doc
+    try:
+        text = extract_doc(content, file.filename or "upload")
+    except (ValueError, ImportError) as exc:
+        # Fall back to raw UTF-8 decode for unsupported types (e.g. plain .log)
+        log.warning("extract_fallback", reason=str(exc), filename=file.filename)
+        text = content.decode("utf-8", errors="ignore")
     n = vector_store.ingest(
         text,
         metadata={"source": source or file.filename or "upload", "identity_id": identity_id},

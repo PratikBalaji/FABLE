@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     # App
     log_level: str = "INFO"
     feedback_db_path: str = "./data/feedback.jsonl"
-    app_name: str = "F.A.B.L.E."
+    app_name: str = "FABLE"
+    app_full_name: str = "Framework for Adversarial Benchmarking and Logic Evaluation"
     app_url: str = "http://localhost:3000"
 
     # Adversarial pipeline knobs (used by adversarial_lifecycle.py + adversarial.py)

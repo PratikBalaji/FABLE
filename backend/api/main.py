@@ -29,8 +29,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="F.A.B.L.E. API",
-    description="Federated Agent Bus & Lifecycle Engine",
+    title="FABLE API",
+    description="Framework for Adversarial Benchmarking and Logic Evaluation",
     version="0.1.0",
     lifespan=lifespan,
 )

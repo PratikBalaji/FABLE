@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import type { AgentMessage } from "@/lib/api";
 import { cn } from "@/components/ui/cn";
 
@@ -136,35 +137,40 @@ function AgentSeat({
 }
 
 // ─── Message card ─────────────────────────────────────────────────────────────
-function WarRoomMessage({ msg, isNew }: { msg: AgentMessage; isNew: boolean }) {
+function WarRoomMessage({ msg }: { msg: AgentMessage }) {
   const meta = getRoleMeta(msg.role);
 
   return (
-    <div
-      className={cn(
-        "rounded-xl p-4 glass-surface border transition-all duration-300",
-        isNew ? "animate-fade-in-up" : "",
-        `border-l-2`
-      )}
-      style={{ borderLeftColor: meta.color }}
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-xl p-4 glass-surface border-l-2 transition-colors duration-200 hover:bg-surface0/20"
+      style={{
+        borderLeftColor: meta.color,
+        boxShadow: `inset 0 0 40px ${meta.color}0d`,
+      }}
     >
       <div className="flex items-center gap-2 mb-2">
-        <span className={cn("text-[10px] font-mono px-2 py-0.5 rounded-full", meta.badge)}>
+        <span
+          className={cn("text-[10px] font-mono px-2 py-0.5 rounded-full", meta.badge)}
+          style={{ textShadow: `0 0 8px ${meta.color}60` }}
+        >
           {meta.label.toUpperCase()}
         </span>
         <span className="text-[10px] text-overlay font-mono">
           {new Date(msg.timestamp).toLocaleTimeString()}
         </span>
         {typeof msg.metadata?.model === "string" && (
-          <span className="text-[10px] text-overlay font-mono ml-auto">
-            {msg.metadata.model.split("/").pop()}
+          <span className="text-[10px] text-overlay/60 font-mono ml-auto">
+            {(msg.metadata.model as string).split("/").pop()}
           </span>
         )}
       </div>
       <p className="text-text text-xs font-mono whitespace-pre-wrap leading-relaxed">
         {msg.content}
       </p>
-    </div>
+    </motion.div>
   );
 }
 
@@ -251,13 +257,11 @@ export default function WarRoom({ messages, isLoading, mode }: WarRoomProps) {
           </div>
         )}
 
-        {revealed.map((msg, i) => (
-          <WarRoomMessage
-            key={msg.message_id}
-            msg={msg}
-            isNew={i === revealed.length - 1}
-          />
-        ))}
+        <AnimatePresence initial={false}>
+          {revealed.map((msg) => (
+            <WarRoomMessage key={msg.message_id} msg={msg} />
+          ))}
+        </AnimatePresence>
 
         {/* Show thinking skeleton for active agent not yet revealed */}
         {(isLoading || (activeRole && revealed.length < messages.length)) && (
