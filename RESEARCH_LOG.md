@@ -794,3 +794,45 @@ This directly augments `get_best_model_for()` with empirical inter-model agreeme
 3. **Heatmap UI:** cosine similarity can be visualized as a color matrix (green=high agreement, red=divergence). This could be a small canvas or SVG component — no heavy charting lib needed.
 4. **Monte Carlo convergence:** With only 4 variants, the "law of large numbers" doesn't fully kick in. Should the system detect when consensus has converged (variance < threshold) and stop early?
 5. **Training signal granularity:** Should the ELM (Phase 11) receive per-variant, per-model scores from Monte Carlo runs, not just the aggregate consensus?
+
+
+---
+
+## Phase 14 — Latency Fix + Evaluation Runs
+
+**Run timestamp:** 2026-06-13 22:52 UTC
+**Config:** summaries_per_agent=off (run-level only), critic=claude-3.5-haiku, refiner=gpt-4o-mini, adversarial_max_rounds=2, per-call timeout=45s.
+
+### Standard mode (5 runs)
+
+| Run | Prompt | Verdict | Avg Score | Time (s) | Rationale |
+|-----|--------|---------|-----------|----------|-----------|
+| 1 | code | PASS | 87% | 39.9 | Strong performance: 87% across all rubric dimensions. Best on accuracy. |
+| 2 | reasoning | PASS | 90% | 22.0 | Strong performance: 90% across all rubric dimensions. Best on clarity. |
+| 3 | finance | PASS | 92% | 45.2 | Strong performance: 92% across all rubric dimensions. Best on accuracy. |
+| 4 | factual | PASS | 82% | 29.0 | Strong performance: 82% across all rubric dimensions. Best on accuracy. |
+| 5 | creative | WARN | 60% | 27.7 | Overall score 60%. Weakest areas: coverage, actionability. |
+
+**Aggregate:** mean score 82% · mean time 32.8s · pass rate 4/5
+
+### Adversarial mode (5 runs)
+
+| Run | Prompt | Verdict | Avg Score | Rounds | Time (s) | Rationale |
+|-----|--------|---------|-----------|--------|----------|-----------|
+| 1 | code | ACCEPT | 85% | 2/2 | 78.9 | The Actor's implementation correctly solves the Fibonacci problem with O(n) time complexity and O(1) space complexity, meeting all core success criteria. The fu |
+| 2 | reasoning | ACCEPT | 85% | 2/2 | 61.6 | The Actor's solution is mathematically correct and reaches the right answer of $0.05. While the Critic identified valid presentation issues (inconsistent variab |
+| 3 | finance | ACCEPT | 75% | 2/2 | 90.6 | While the Actor's response contains several technical inaccuracies (RMD age, incomplete phase-out details) and lacks depth in conversion strategies and personal |
+| 4 | factual | ACCEPT | 75% | 2/2 | 68.1 | While the response addresses the core causal factors (subprime mortgages, securitization, regulatory failures, leverage) and meets the length constraint of 3-5  |
+| 5 | creative | ACCEPT | 82% | 2/2 | 62.4 | The Actor has delivered three distinct product names with rationales that substantially meet the core requirements. While trademark concerns for PrivAItes and m |
+
+**Aggregate:** mean score 80% · mean time 72.3s · pass rate 5/5
+
+### Analysis
+
+Quality measured via the 5-dimension rubric (accuracy, depth, clarity, actionability, coverage); verdict is PASS/WARN/FAIL (standard, derived from rubric average) or ACCEPT/REJECT (adversarial, judge verdict). Standard mean latency 32.8s, adversarial 72.3s — both within the 180s client timeout. The model-ID fix (removing the invalid `meta-llama/llama-3-70b-instruct`) eliminated the per-role failed-call + fallback retry overhead, and run-level-only summaries cut ~11 redundant LLM calls from each adversarial run.
+
+### Root-cause findings (debugging pass)
+
+**Bug 1 — adversarial timeout (the reported symptom).** Every `/adversarial-run` exceeded the 120s axios limit. Three compounding causes: (a) `adv_critic_model` and `refiner_model` were set to `meta-llama/llama-3-70b-instruct`, which returns 404 on OpenRouter — each role wasted a failed call + fallback retry every round; (b) the summarizer fired ~12 inline LLM calls before responding; (c) the base sequential pipeline (~11 calls) already neared the limit. Fixes: valid model IDs (`claude-3.5-haiku` critic, `gpt-4o-mini` refiner), run-level-only summaries (12→1 call), a 45s per-call client timeout, and axios raised to 180s. Post-fix adversarial latency peaked at 90.6s.
+
+**Bug 2 — judge verdict silently discarded (found during the first eval batch).** The first 5-run adversarial batch produced two `REJECT / 0%` results. Log inspection showed the judge had actually returned `ACCEPT` (0.85, 0.72) — but the JSON was truncated mid-string because the judge crammed the full `final_answer` into a 1024-token budget, so `_parse_judge_output` fell through to its `REJECT / 0.0` default and threw away a valid acceptance. Fixes: judge token budget 1024→2560, and a field-level salvage path in `_parse_judge_output` that regex-recovers `verdict`/`score`/`rationale` when the full JSON is malformed. The second batch confirmed the fix — the finance run (90.6s) again truncated, but salvage recovered it as `ACCEPT / 75%` instead of a false reject (`adversarial_judge_parse_salvaged verdict=ACCEPT` in logs). Adversarial pass rate went 3/5 → 5/5.

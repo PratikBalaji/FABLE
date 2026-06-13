@@ -35,6 +35,7 @@ class ModelRouter:
         self._client = openai.AsyncOpenAI(
             api_key=settings.openrouter_api_key,
             base_url=settings.openrouter_base_url,
+            timeout=45.0,   # P14: fail a hung upstream call fast → fallback chain handles it
             default_headers={
                 "HTTP-Referer": settings.app_url,
                 "X-Title": settings.app_name,
@@ -49,14 +50,16 @@ class ModelRouter:
         force_model: str | None = None,
     ) -> ModelResponse:
         model = force_model or settings.primary_model
+        return await self._call_model(model, system, user, max_tokens=2048)
 
+    async def _call_model(self, model: str, system: str, user: str, max_tokens: int) -> ModelResponse:
         resp = await self._client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            max_tokens=2048,
+            max_tokens=max_tokens,
         )
         msg = resp.choices[0].message
         return ModelResponse(
@@ -90,23 +93,24 @@ class ModelRouter:
             }
             model = model_map.get(role, settings.primary_model)
 
-        resp = await self._client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=max_tokens,
-        )
-        msg = resp.choices[0].message
-        return ModelResponse(
-            content=msg.content or "",
-            model=resp.model,
-            usage={
-                "input": resp.usage.prompt_tokens if resp.usage else 0,
-                "output": resp.usage.completion_tokens if resp.usage else 0,
-            },
-        )
+        fallback_chain = [model, settings.primary_model, settings.secondary_model]
+        seen: set[str] = set()
+        last_exc: Exception | None = None
+        for candidate in fallback_chain:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                return await self._call_model(candidate, system, user, max_tokens)
+            except openai.BadRequestError as exc:
+                log.warning("model_bad_request", model=candidate, role=role, error=str(exc))
+                last_exc = exc
+            except openai.NotFoundError as exc:
+                log.warning("model_not_found", model=candidate, role=role, error=str(exc))
+                last_exc = exc
+        raise RuntimeError(
+            f"All models failed for role '{role}'. Last error: {last_exc}"
+        ) from last_exc
 
 
     async def complete_with_routing(

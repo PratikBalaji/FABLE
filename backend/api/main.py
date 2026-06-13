@@ -2,21 +2,18 @@
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from ..agents.register import register_all
 from ..agents.adversarial_register import register_adversarial
 from ..core.config import settings
+from .limiter import limiter
 from .routes import run, feedback, ingest, graph, identity
 
 log = structlog.get_logger()
-
-# F-034: per-IP rate limiter shared across routes via app.state
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 
 @asynccontextmanager

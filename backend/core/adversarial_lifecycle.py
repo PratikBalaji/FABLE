@@ -22,6 +22,7 @@ from .bus import AgentMessage, TaskContext, bus
 from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
 from .memory_service import memory_service
+from .summarizer import summarize_run
 from ..evaluation.rubric import score as rubric_score
 from ..elm.fallback import static_declarations
 from ..router.model_router import ModelRouter
@@ -206,6 +207,23 @@ async def run_adversarial_task(
         "unresolved_issues": judge_result.get("unresolved_issues", []),
     }
 
+    # Summaries (concurrent, non-fatal)
+    try:
+        summaries = await summarize_run(input_text, serialized, final_output, router=router)
+    except Exception:
+        summaries = {"run_summary": "", "per_agent": {}}
+    per_agent_summaries: dict[str, str] = summaries.get("per_agent", {})
+    for msg in serialized:
+        msg["summary"] = per_agent_summaries.get(msg["message_id"], "")
+    run_summary: str = summaries.get("run_summary", "")
+
+    # Verdict mirrors adversarial judge
+    verdict = {
+        "verdict": adversarial_meta["judge_verdict"],
+        "score": adversarial_meta["judge_score"],
+        "rationale": adversarial_meta["judge_rationale"],
+    }
+
     # Persist per-user memory: full transcript + a linked assistant chat turn (multi-user mode).
     if multiuser:
         assert user_id is not None
@@ -249,6 +267,9 @@ async def run_adversarial_task(
         "model_used": model_used,
         "knowledge_graph": graph_state,
         "adversarial_meta": adversarial_meta,
+        "run_summary": run_summary,
+        "final_answer": final_output,
+        "verdict": verdict,
     }
 
 
@@ -267,6 +288,16 @@ def _parse_judge_output(content: str) -> dict:
             return json.loads(match.group())
         except json.JSONDecodeError:
             pass
+
+    # P14: field-level salvage — the judge JSON is frequently TRUNCATED mid-string
+    # (long final_answer hits the token cap), which nukes a perfectly good verdict.
+    # Recover verdict/score/rationale individually via regex rather than defaulting
+    # to REJECT/0.0, which silently discarded valid ACCEPT decisions.
+    salvaged = _salvage_judge_fields(cleaned)
+    if salvaged is not None:
+        log.warning("adversarial_judge_parse_salvaged", verdict=salvaged.get("verdict"))
+        return salvaged
+
     log.warning("adversarial_judge_parse_failed", content_preview=content[:200])
     return {
         "verdict": "REJECT",
@@ -274,6 +305,36 @@ def _parse_judge_output(content: str) -> dict:
         "rationale": "Judge output could not be parsed as JSON.",
         "unresolved_issues": ["Judge parse failure"],
         "final_answer": "",
+    }
+
+
+def _salvage_judge_fields(text: str) -> dict | None:
+    """Extract judge fields individually when the full JSON is malformed/truncated.
+
+    Returns a dict if at least a verdict was recovered, else None.
+    """
+    verdict_m = re.search(r'"verdict"\s*:\s*"(ACCEPT|REJECT)"', text, re.IGNORECASE)
+    if not verdict_m:
+        return None
+    verdict = verdict_m.group(1).upper()
+
+    score_m = re.search(r'"score"\s*:\s*([0-9]*\.?[0-9]+)', text)
+    score = float(score_m.group(1)) if score_m else (0.8 if verdict == "ACCEPT" else 0.0)
+
+    rationale_m = re.search(r'"rationale"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    rationale = rationale_m.group(1).replace('\\"', '"').replace("\\n", " ") if rationale_m else \
+        "Recovered from truncated judge output."
+
+    # final_answer may be truncated (no closing quote) — grab whatever is present.
+    fa_m = re.search(r'"final_answer"\s*:\s*"((?:[^"\\]|\\.)*)', text)
+    final_answer = fa_m.group(1).replace('\\"', '"').replace("\\n", "\n") if fa_m else ""
+
+    return {
+        "verdict": verdict,
+        "score": score,
+        "rationale": rationale,
+        "unresolved_issues": [],
+        "final_answer": final_answer,
     }
 
 
