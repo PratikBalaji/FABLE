@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 
 from .embeddings import embed_text as _api_embed_text
+from .elm_router import ELMRouter
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +87,10 @@ class KnowledgeEngine:
         self.runs: list[RunRecord] = []
         self._embeddings_matrix: np.ndarray | None = None
 
+        # Phase 11: ELM meta-scorer
+        self._elm = ELMRouter()
+        self._elm.load(self.data_dir / "elm_router.npz")
+
         self._load()
 
     # -- Persistence ---------------------------------------------------------
@@ -118,6 +123,8 @@ class KnowledgeEngine:
             "edges": [asdict(e) for e in self.edges],
         }
         self._graph_path().write_text(json.dumps(graph_data, indent=2))
+        # Phase 11: persist ELM weights alongside graph
+        self._elm.save(self.data_dir / "elm_router.npz")
 
     def _append_run(self, run: RunRecord) -> None:
         with open(self._runs_path(), "a") as f:
@@ -275,6 +282,16 @@ class KnowledgeEngine:
         self.runs.append(run)
         self._append_run(run)
         self._rebuild_embedding_matrix()
+
+        # Phase 11: feed this run into the ELM meta-scorer
+        if scores:
+            try:
+                features = self._build_elm_features(embedding, input_text, domain)
+                score_avg = sum(scores.values()) / len(scores)
+                self._elm.add_sample(features, score_avg)
+            except Exception:  # noqa: BLE001
+                pass  # ELM failure must never break a run
+
         self.save()
 
         return self.get_graph_state()
@@ -320,22 +337,70 @@ class KnowledgeEngine:
             for model, scores in perf.items()
         }
 
+    def _build_elm_features(self, embedding: list[float], input_text: str, domain: str) -> np.ndarray:
+        """Build 387-d feature vector for the ELM: 384-d embedding + 3 scalars."""
+        emb = np.array(embedding, dtype=np.float32)
+        scalars = np.array([
+            min(len(input_text) / 10_000.0, 1.0),            # normalised prompt length
+            1.0 if "adversarial" in domain.lower() else 0.0,  # adversarial flag
+            min(len(self.runs) / 1_000.0, 1.0),               # experience signal
+        ], dtype=np.float32)
+        return np.concatenate([emb, scalars])
+
     def get_best_model_for(self, query: str) -> str | None:
-        """Determine which model historically performs best for similar queries."""
+        """Determine which model historically performs best for similar queries.
+
+        Phase 11: consults the ELM meta-scorer first (after MIN_SAMPLES runs).
+        Falls back to weighted nearest-neighbour heuristic when ELM not trained.
+        """
         if not self.runs or self._embeddings_matrix is None:
             return None
         query_emb = np.array(self.embed_text(query), dtype=np.float32)
+
+        # ── ELM path (after sufficient training data) ──────────────────────
+        if self._elm.is_trained:
+            # ELM predicts a scalar quality score for the current context.
+            # We use it to weight the nearest-neighbour candidates.
+            features = self._build_elm_features(
+                query_emb.tolist(), query, "general"
+            )
+            elm_score = self._elm.predict(features)
+            if elm_score is not None:
+                # Blend: find top-10 similar runs, multiply similarity by ELM score
+                sims = self._embeddings_matrix @ query_emb
+                top_indices = np.argsort(-sims)[:10]
+                model_scores: dict[str, list[float]] = defaultdict(list)
+                for idx in top_indices:
+                    run = self.runs[idx]
+                    relevance = float(sims[idx])
+                    avg_quality = sum(run.scores.values()) / max(len(run.scores), 1)
+                    # ELM score modulates heuristic weight
+                    model_scores[run.model_used].append(relevance * avg_quality * (0.5 + elm_score * 0.5))
+                if model_scores:
+                    best = max(model_scores, key=lambda m: sum(model_scores[m]) / len(model_scores[m]))
+                    import structlog
+                    structlog.get_logger().info(
+                        "elm_predict_active",
+                        elm_score=round(elm_score, 3),
+                        best_model=best,
+                        n_samples=self._elm.n_samples,
+                    )
+                    return best
+
+        # ── Heuristic fallback ─────────────────────────────────────────────
+        import structlog
+        structlog.get_logger().info("elm_predict_heuristic", trained=self._elm.is_trained)
         sims = self._embeddings_matrix @ query_emb
         top_indices = np.argsort(-sims)[:10]
-        model_scores: dict[str, list[float]] = defaultdict(list)
+        heuristic_scores: dict[str, list[float]] = defaultdict(list)
         for idx in top_indices:
             run = self.runs[idx]
             relevance = float(sims[idx])
             avg_quality = sum(run.scores.values()) / max(len(run.scores), 1)
-            model_scores[run.model_used].append(relevance * avg_quality)
-        if not model_scores:
+            heuristic_scores[run.model_used].append(relevance * avg_quality)
+        if not heuristic_scores:
             return None
-        return max(model_scores, key=lambda m: sum(model_scores[m]) / len(model_scores[m]))
+        return max(heuristic_scores, key=lambda m: sum(heuristic_scores[m]) / len(heuristic_scores[m]))
 
     # -- Visualization state -------------------------------------------------
 

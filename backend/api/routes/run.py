@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 
-from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta
+from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta, VerdictMeta
 from ...core.auth import AuthedUser, get_optional_user
 from ...core.config import settings
 from ...core.guardrails import GuardrailBlocked
@@ -21,7 +21,7 @@ from ...core.lifecycle import run_task
 from ...core.adversarial_lifecycle import run_adversarial_task
 from ...core.pii import PiiRedactionFailed, persist_entity_map, redact, reinject
 from ...router.model_router import router as default_router
-from ..main import limiter
+from ..limiter import limiter
 
 router = APIRouter()
 
@@ -100,7 +100,10 @@ async def run_collaboration(
     for m in result["messages"]:
         m2 = dict(m)
         m2["content"] = reinject(m2.get("content", ""), redaction.entities)
+        m2["summary"] = reinject(m2.get("summary", ""), redaction.entities)
         reinjected_messages.append(m2)
+
+    raw_verdict = result.get("verdict", {})
 
     return RunResponse(
         task_id=result["task_id"],
@@ -110,6 +113,9 @@ async def run_collaboration(
         scores=result.get("scores", {}),
         model_used=result.get("model_used", ""),
         knowledge_graph=GraphState(**result["knowledge_graph"]),
+        run_summary=reinject(result.get("run_summary", ""), redaction.entities),
+        final_answer=reinject(result.get("final_answer", ""), redaction.entities),
+        verdict=VerdictMeta(**raw_verdict) if raw_verdict else VerdictMeta(),
     )
 
 
@@ -174,9 +180,12 @@ async def run_adversarial_collaboration(
     for m in result["messages"]:
         m2 = dict(m)
         m2["content"] = reinject(m2.get("content", ""), redaction.entities)
+        m2["summary"] = reinject(m2.get("summary", ""), redaction.entities)
         reinjected_messages.append(m2)
 
     adv_meta = result.get("adversarial_meta", {})
+
+    raw_verdict = result.get("verdict", {})
 
     return AdversarialRunResponse(
         task_id=result["task_id"],
@@ -186,6 +195,9 @@ async def run_adversarial_collaboration(
         scores=result.get("scores", {}),
         model_used=result.get("model_used", ""),
         knowledge_graph=GraphState(**result["knowledge_graph"]),
+        run_summary=reinject(result.get("run_summary", ""), redaction.entities),
+        final_answer=reinject(result.get("final_answer", ""), redaction.entities),
+        verdict=VerdictMeta(**raw_verdict) if raw_verdict else VerdictMeta(),
         adversarial_meta=AdversarialMeta(
             rounds_completed=adv_meta.get("rounds_completed", 0),
             max_rounds=adv_meta.get("max_rounds", 2),

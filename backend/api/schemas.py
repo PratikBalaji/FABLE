@@ -14,9 +14,16 @@ class RunRequest(BaseModel):
 class AgentMessageOut(BaseModel):
     role: str
     content: str
+    summary: str = ""
     metadata: dict = {}
     timestamp: str
     message_id: str
+
+
+class VerdictMeta(BaseModel):
+    verdict: str = "UNKNOWN"
+    score: float = 0.0
+    rationale: str = ""
 
 
 class GraphNode(BaseModel):
@@ -58,6 +65,9 @@ class RunResponse(BaseModel):
     scores: dict[str, float] = {}
     model_used: str = ""
     knowledge_graph: GraphState
+    run_summary: str = ""
+    final_answer: str = ""
+    verdict: VerdictMeta = Field(default_factory=VerdictMeta)
 
 
 class AdversarialMeta(BaseModel):

@@ -21,7 +21,9 @@ _TOKEN_BUDGETS: dict[str, int] = {
     "adv:critic":    1024,
     "adv:validator": 1024,
     "adv:refiner":   512,
-    "adv:judge":     1024,
+    # P14: bumped 1024→2560 — judge emits verdict+rationale+unresolved+final_answer
+    # in one JSON blob; 1024 truncated mid-string on long answers → parse failures.
+    "adv:judge":     2560,
 }
 
 

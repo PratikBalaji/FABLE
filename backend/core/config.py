@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "fable-rag-docs"
 
     # App
+    env: str = Field(default="production", alias="ENV")  # "local" disables auth enforcement
     log_level: str = "INFO"
     feedback_db_path: str = "./data/feedback.jsonl"
     app_name: str = "FABLE"
@@ -44,12 +45,19 @@ class Settings(BaseSettings):
     # Adversarial pipeline knobs (used by adversarial_lifecycle.py + adversarial.py)
     adversarial_max_rounds: int = Field(default=2, alias="ADVERSARIAL_MAX_ROUNDS")
     adversarial_judge_threshold: float = 0.80
+    # P14: rebalanced (Phase 12) + fixed invalid OpenRouter IDs.
+    # meta-llama/llama-3-70b-instruct was NOT routable on OpenRouter (404),
+    # forcing a failed call + fallback retry per critic/refiner role per round.
     planner_model: str = "anthropic/claude-sonnet-4-5"
     actor_model: str = "openai/gpt-4o"
-    adv_critic_model: str = "meta-llama/llama-3-70b-instruct"
-    validator_model: str = "google/gemini-pro-1.5"
-    refiner_model: str = "meta-llama/llama-3-70b-instruct"
+    adv_critic_model: str = "anthropic/claude-3.5-haiku"   # was llama-3-70b (invalid)
+    validator_model: str = "openai/gpt-4o-mini"             # gemini-2.0-flash not routable
+    refiner_model: str = "openai/gpt-4o-mini"               # was llama-3-70b (invalid)
     judge_model: str = "anthropic/claude-sonnet-4-5"
+
+    # Summaries (P14: per-agent off by default — cuts adversarial latency ~12 calls → 1)
+    summaries_enabled: bool = Field(default=True, alias="SUMMARIES_ENABLED")
+    summaries_per_agent: bool = Field(default=False, alias="SUMMARIES_PER_AGENT")
 
     # Multi-user audit (used by guardrails.py for event log)
     use_supabase: bool = Field(default=False, alias="USE_SUPABASE")
@@ -59,7 +67,7 @@ class Settings(BaseSettings):
     guardrails_llm_check: bool = Field(default=True, alias="GUARDRAILS_LLM_CHECK")
     guardrails_post_check: bool = Field(default=True, alias="GUARDRAILS_POST_CHECK")
     guardrails_classifier_model: str = Field(
-        default="meta-llama/llama-guard-3-8b",
+        default="openai/gpt-4o-mini",
         alias="GUARDRAILS_CLASSIFIER_MODEL",
     )
 
@@ -88,7 +96,7 @@ class Settings(BaseSettings):
     # PII redaction (regex + optional LLM extraction layer, P6a)
     pii_enabled: bool = Field(default=True, alias="PII_ENABLED")
     pii_llm_fallback: bool = Field(default=True, alias="PII_LLM_FALLBACK")
-    pii_classifier_model: str = Field(default="meta-llama/llama-guard-3-8b", alias="PII_CLASSIFIER_MODEL")
+    pii_classifier_model: str = Field(default="openai/gpt-4o-mini", alias="PII_CLASSIFIER_MODEL")
     pii_confidence_threshold: float = Field(default=0.40, alias="PII_CONFIDENCE_THRESHOLD")
 
     # Memory abstraction — never store raw text in memory_chunks

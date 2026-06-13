@@ -13,3 +13,13 @@ def get_graph() -> GraphState:
 @router.get("/graph/models")
 def get_model_performance(domain: str | None = None) -> dict:
     return knowledge_engine.get_model_performance(domain)
+
+
+@router.get("/graph/elm")
+def get_elm_status() -> dict:
+    """Phase 11: ELM meta-scorer status for the frontend stats chip."""
+    elm = knowledge_engine._elm
+    return {
+        "elm_trained": elm.is_trained,
+        "elm_samples": elm.n_samples,
+    }

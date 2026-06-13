@@ -9,7 +9,9 @@ import uuid
 from .bus import AgentMessage, TaskContext, bus
 from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
+from .summarizer import summarize_run
 from ..evaluation.rubric import score as rubric_score
+from ..evaluation.verdict import derive_verdict
 from ..router.model_router import router as default_router
 
 
@@ -93,6 +95,17 @@ async def run_task(
     if post.verdict == "block":
         raise GuardrailBlocked(post, "post_check")
 
+    # Step 4c: Summaries + verdict (concurrent, non-fatal)
+    try:
+        summaries = await summarize_run(input_text, serialized, final_output, router=default_router)
+    except Exception:
+        summaries = {"run_summary": "", "per_agent": {}}
+    per_agent_summaries: dict[str, str] = summaries.get("per_agent", {})
+    for msg in serialized:
+        msg["summary"] = per_agent_summaries.get(msg["message_id"], "")
+    run_summary: str = summaries.get("run_summary", "")
+    verdict = derive_verdict(scores)
+
     # Step 5: Feed back into knowledge engine
     graph_state = knowledge_engine.ingest_run(
         input_text=input_text,
@@ -110,4 +123,7 @@ async def run_task(
         "scores": scores,
         "model_used": model_used,
         "knowledge_graph": graph_state,
+        "run_summary": run_summary,
+        "final_answer": final_output,
+        "verdict": verdict,
     }

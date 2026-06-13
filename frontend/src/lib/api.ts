@@ -7,7 +7,7 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ? "/api" : "http://localhost:8000";
 
 const api = axios.create({
   baseURL: BASE,
-  timeout: 120_000, // 120s covers Cloud Run cold start + multi-LLM pipeline
+  timeout: 180_000, // 180s — adversarial pipeline (planner + rounds + rubric) can run long
   withCredentials: true,  // send identity cookie on cross-origin requests (F-008 CORS fix)
   headers: {
     "X-FABLE-Request": "1",  // CSRF protection header (F-008)
@@ -20,7 +20,7 @@ api.interceptors.response.use(
   (err: AxiosError) => {
     if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
       return Promise.reject(
-        new Error("Backend timed out — try again (Cloud Run cold start can take ~10s)")
+        new Error("Backend timed out — the adversarial pipeline can take up to ~3 min. Try again.")
       );
     }
     if (!err.response) {
@@ -38,9 +38,16 @@ api.interceptors.response.use(
 export interface AgentMessage {
   role: string;
   content: string;
+  summary?: string;
   metadata: Record<string, unknown>;
   timestamp: string;
   message_id: string;
+}
+
+export interface VerdictMeta {
+  verdict: string;   // "PASS"|"WARN"|"FAIL" (standard) or "ACCEPT"|"REJECT" (adversarial)
+  score: number;
+  rationale: string;
 }
 
 export interface GraphNode {
@@ -82,6 +89,9 @@ export interface RunResponse {
   scores: Record<string, number>;
   model_used: string;
   knowledge_graph: GraphState;
+  run_summary: string;
+  final_answer: string;
+  verdict: VerdictMeta;
 }
 
 export interface AdversarialMeta {

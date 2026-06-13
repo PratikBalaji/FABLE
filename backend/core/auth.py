@@ -82,4 +82,9 @@ async def get_optional_user(authorization: str = Header(default="")) -> "AuthedU
     """Enforce auth only in multi-user mode; legacy single-user mode stays open."""
     if not settings.use_supabase:
         return None
+    if settings.env == "local":
+        # Local dev: bypass JWT so frontend can test without a Supabase session.
+        # Production (ENV != "local") still enforces tokens.
+        log.warning("auth_bypassed_local_dev")
+        return AuthedUser(id="dev-local", email="dev@local", token="")
     return await get_current_user(authorization)

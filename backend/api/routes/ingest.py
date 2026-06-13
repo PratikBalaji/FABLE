@@ -1,12 +1,13 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile, File, Form, status
 
-log = structlog.get_logger()
 from ..schemas import IngestRequest, IngestResponse
 from ...core.auth import get_optional_user, AuthedUser
 from ...core.config import settings
 from ...core.identity import resolve_identity, set_identity_cookie
 from ...rag.pipeline import vector_store
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
