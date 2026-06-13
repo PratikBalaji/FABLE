@@ -33,16 +33,41 @@ kind load docker-image fable-agent-group:local --name "${CLUSTER_NAME}"
 echo "[4/6] Applying K8s manifests..."
 kubectl apply -k "${SCRIPT_DIR}/overlays/local/"
 
-# 5. Create secrets from .env (if present)
+# 5. Create per-pod secrets (F-030: least privilege — each pod gets only what it needs).
+# The coordinator gets all secrets. Agent pods get only their LLM provider key +
+# internal token. SUPABASE_SERVICE_ROLE_KEY and APP_ENCRYPTION_KEY are NEVER mounted
+# onto agent pods.
 echo "[5/6] Setting up secrets..."
 if [ -f "${PROJECT_ROOT}/.env" ]; then
-    # Delete existing secret if present, then recreate
-    kubectl delete secret api-keys -n fable --ignore-not-found
-    kubectl create secret generic api-keys --from-env-file="${PROJECT_ROOT}/.env" -n fable
-    echo "  Secrets created from .env"
+    # Source env to read individual values
+    set -a; source "${PROJECT_ROOT}/.env"; set +a
+
+    # Coordinator: all secrets
+    kubectl delete secret coordinator-secrets -n fable --ignore-not-found
+    kubectl create secret generic coordinator-secrets \
+        --from-literal=OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+        --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+        --from-literal=SUPABASE_URL="${SUPABASE_URL:-}" \
+        --from-literal=SUPABASE_ANON_KEY="${SUPABASE_ANON_KEY:-}" \
+        --from-literal=SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-}" \
+        --from-literal=APP_ENCRYPTION_KEY="${APP_ENCRYPTION_KEY:-}" \
+        --from-literal=IDENTITY_COOKIE_SECRET="${IDENTITY_COOKIE_SECRET:-}" \
+        --from-literal=AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN:-}" \
+        -n fable
+    echo "  Coordinator secrets created."
+
+    # Agent pods: only the LLM provider key + internal auth token
+    kubectl delete secret agent-secrets -n fable --ignore-not-found
+    kubectl create secret generic agent-secrets \
+        --from-literal=OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+        --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+        --from-literal=AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN:-}" \
+        -n fable
+    echo "  Agent pod secrets created (no DB/encryption keys)."
 else
-    echo "  WARNING: No .env file found. Create secrets manually:"
-    echo "    kubectl create secret generic api-keys --from-literal=OPENROUTER_API_KEY=sk-... -n fable"
+    echo "  WARNING: No .env file found. Create secrets manually."
+    echo "  Coordinator: kubectl create secret generic coordinator-secrets --from-literal=... -n fable"
+    echo "  Agent pods:  kubectl create secret generic agent-secrets --from-literal=OPENROUTER_API_KEY=sk-... -n fable"
 fi
 
 # 6. Wait for rollout

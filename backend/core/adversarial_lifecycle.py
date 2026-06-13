@@ -68,8 +68,10 @@ async def run_adversarial_task(
 
     Returns a dict with the same keys as run_task() plus 'adversarial_meta'.
     """
+    _MAX_ROUNDS_CAP = 10  # F-020: hard ceiling regardless of caller
     if max_rounds is None:
         max_rounds = settings.adversarial_max_rounds
+    max_rounds = min(max_rounds, _MAX_ROUNDS_CAP)
 
     task_id = str(uuid.uuid4())
     multiuser = bool(settings.use_supabase and user_id)
@@ -110,6 +112,8 @@ async def run_adversarial_task(
             "adversarial_round": 0,
             "router": router,  # per-user router; None => agents use singleton fallback
             "elm_declarations": declarations,
+            "user_id": user_id,
+            "_guardrail_checked": True,  # F-018: pre_check already ran above
         },
     )
 
@@ -217,12 +221,16 @@ async def run_adversarial_task(
             pipeline=pipeline_used,
             model_used=model_used,
             messages=serialized,
+            router=router,  # F-010: pass router for abstract_for_memory
         )
         if session_id:
-            await memory_service.store_chat_turn(user_id, session_id, "user", input_text)
+            await memory_service.store_chat_turn(
+                user_id, session_id, "user", input_text, router=router,
+            )
             await memory_service.store_chat_turn(
                 user_id, session_id, "assistant", final_output,
                 model_used=model_used, scores=scores, adversarial_run_id=run_id,
+                router=router,
             )
 
     log.info(

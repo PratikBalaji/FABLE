@@ -50,24 +50,43 @@ class VectorStore:
         self._meta.extend([metadata or {}] * len(chunks))
         return len(chunks)
 
-    def retrieve(self, query: str, top_k: int = settings.retrieval_top_k) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = settings.retrieval_top_k,
+        identity_id: str | None = None,
+    ) -> list[dict]:
         if self._index is None or not self._chunks:
             return []
         q_emb = np.array([_api_embed_batch([query])[0]], dtype=np.float32)
-        distances, indices = self._index.search(q_emb, top_k)
+        # Over-fetch to leave room for per-identity filtering
+        fetch_k = top_k * 4 if identity_id else top_k
+        distances, indices = self._index.search(q_emb, min(fetch_k, len(self._chunks)))
         results = []
         for dist, idx in zip(distances[0], indices[0]):
-            if idx < len(self._chunks):
-                results.append({
-                    "chunk": self._chunks[idx],
-                    "score": float(1 - dist),
-                    "metadata": self._meta[idx],
-                })
+            if idx >= len(self._chunks):
+                continue
+            meta = self._meta[idx]
+            # F-024: filter to caller's identity when provided
+            if identity_id and meta.get("identity_id") not in (identity_id, None):
+                continue
+            results.append({
+                "chunk": self._chunks[idx],
+                "score": float(1 - dist),
+                "metadata": meta,
+            })
+            if len(results) >= top_k:
+                break
         return results
 
-    def format_context(self, query: str, top_k: int = settings.retrieval_top_k) -> str:
+    def format_context(
+        self,
+        query: str,
+        top_k: int = settings.retrieval_top_k,
+        identity_id: str | None = None,
+    ) -> str:
         """Retrieve and format chunks as a prompt-ready context block."""
-        hits = self.retrieve(query, top_k)
+        hits = self.retrieve(query, top_k, identity_id=identity_id)
         if not hits:
             return ""
         lines = []

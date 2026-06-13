@@ -9,3 +9,4 @@ nodes:
       - containerPort: 30000
         hostPort: 8000
         protocol: TCP
+        listenAddress: "127.0.0.1"  # F-031: bind localhost only, not 0.0.0.0

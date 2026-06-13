@@ -49,6 +49,18 @@ class AgentBus:
     async def dispatch(self, role: str, ctx: TaskContext) -> AgentMessage:
         if role not in self._agents:
             raise KeyError(f"No agent registered for role '{role}'")
+
+        # F-018: guard any caller that bypassed the lifecycle (tests, plugins, CLI).
+        # Lifecycle callers set _guardrail_checked=True after their own pre_check.
+        if not ctx.metadata.get("_guardrail_checked"):
+            from .guardrails import GuardrailBlocked, guardrail_engine
+            _router = ctx.metadata.get("router")
+            _user_id = ctx.metadata.get("user_id")
+            pre = await guardrail_engine.pre_check(_user_id, ctx.input, router=_router)
+            if pre.verdict == "block":
+                raise GuardrailBlocked(pre, "pre_check")
+            ctx.metadata["_guardrail_checked"] = True
+
         handler = self._agents[role]
         msg = await handler(ctx)
         ctx.history.append(msg)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
@@ -101,6 +102,11 @@ _MAX_INPUT_CHARS = 20_000   # ~5k tokens
 _MAX_INPUT_BYTES = 60_000   # belt + suspenders on UTF-8 byte size
 
 
+def _normalize(text: str) -> str:
+    """F-022: NFKC-normalize to collapse homoglyphs before pattern matching."""
+    return unicodedata.normalize("NFKC", text)
+
+
 def _rule_check(text: str) -> GuardResult:
     if not text or not text.strip():
         return GuardResult("block", "empty_input", "Input is empty", "rules")
@@ -108,14 +114,17 @@ def _rule_check(text: str) -> GuardResult:
     if len(text) > _MAX_INPUT_CHARS or len(text.encode("utf-8", errors="ignore")) > _MAX_INPUT_BYTES:
         return GuardResult("block", "length", f"Input exceeds {_MAX_INPUT_CHARS} chars", "rules")
 
-    if _BLOCKLIST.search(text):
+    # F-022: normalize before pattern matching to catch homoglyph bypasses
+    normalized = _normalize(text)
+
+    if _BLOCKLIST.search(normalized):
         return GuardResult("block", "blocklist", "Matches static blocklist", "rules")
 
-    if _PROMPT_INJECTION.search(text):
+    if _PROMPT_INJECTION.search(normalized):
         return GuardResult("block", "prompt_injection",
                            "Detected prompt-injection language", "rules")
 
-    if _CREDENTIAL_EXFIL.search(text):
+    if _CREDENTIAL_EXFIL.search(normalized):
         return GuardResult("block", "credential_exfil",
                            "Detected attempt to extract credentials or env secrets", "rules")
 
@@ -159,16 +168,18 @@ class GuardrailEngine:
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("guardrails_classifier_failed", error=str(exc))
-            return GuardResult("allow", "classifier_error", str(exc)[:120], "classifier")
+            # F-021: fail to "warn" not "allow" — logged in audit and visible to operators,
+            # but does not block (avoids hard DoS when classifier is down).
+            return GuardResult("warn", "classifier_error", str(exc)[:120], "classifier")
 
         raw = (resp.content or "").strip()
         # tolerate markdown fences
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
         try:
             data = json.loads(raw)
-            verdict = data.get("verdict", "allow")
+            verdict = data.get("verdict", "warn")
             if verdict not in ("allow", "warn", "block"):
-                verdict = "allow"
+                verdict = "warn"
             result = GuardResult(
                 verdict=verdict,
                 category=str(data.get("category", "")) or "classifier",
@@ -176,7 +187,8 @@ class GuardrailEngine:
                 layer="classifier",
             )
         except Exception:  # noqa: BLE001
-            result = GuardResult("allow", "classifier_parse", "could not parse classifier output", "classifier")
+            # F-021: parse failure → warn (not allow)
+            result = GuardResult("warn", "classifier_parse", "could not parse classifier output", "classifier")
 
         self._cache[h] = result
         if len(self._cache) > 2048:

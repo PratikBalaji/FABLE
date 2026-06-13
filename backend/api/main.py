@@ -2,14 +2,21 @@
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from ..agents.register import register_all
 from ..agents.adversarial_register import register_adversarial
+from ..core.config import settings
 from .routes import run, feedback, ingest, graph, identity
 
 log = structlog.get_logger()
+
+# F-034: per-IP rate limiter shared across routes via app.state
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 
 @asynccontextmanager
@@ -28,11 +35,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# F-008/F-009: restrict CORS to trusted origins with credentials.
+# Set CORS_ORIGINS env var in production (e.g. "https://app.vercel.app").
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.trusted_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-FABLE-Request"],
 )
 
 app.include_router(run.router, tags=["Orchestration"])

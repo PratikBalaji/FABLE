@@ -10,3 +10,6 @@ dist/
 .venv/
 venv/
 .claude/
+# F-037: prevent notebook exports (which may contain user data) from being committed
+notebooks/fable_*.ipynb
+

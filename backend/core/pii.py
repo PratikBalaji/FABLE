@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -228,7 +229,12 @@ async def _llm_extract(text: str, router) -> list[EntitySpan]:
 # ---------------------------------------------------------------------------
 
 def _merge_spans(text: str, spans: list[EntitySpan]) -> RedactionResult:
-    """Sort by start; drop overlapping spans (regex wins on ties); assign placeholders."""
+    """Sort by start; drop overlapping spans (regex wins on ties); assign placeholders.
+
+    F-011: placeholders use a per-redaction nonce so user-injected literal placeholder
+    strings cannot collide with real ones. Format: __PII_<nonce>_<TYPE>_<N>__
+    The double-underscore delimiters also prevent [TYPE_1] being a substring of [TYPE_10].
+    """
     if not spans:
         return RedactionResult(redacted=text, entities=[])
 
@@ -243,13 +249,16 @@ def _merge_spans(text: str, spans: list[EntitySpan]) -> RedactionResult:
         keep.append(s)
         cursor = s.end
 
-    # Assign stable per-type indices (`PERSON_1`, `PERSON_2`, ...)
+    # Per-redaction nonce — 6 hex chars (24 bits of entropy). Makes placeholders
+    # unguessable by users and prevents cross-request collision.
+    nonce = secrets.token_hex(3)
+
     counters: dict[str, int] = {}
     redacted_parts: list[str] = []
     pos = 0
     for s in keep:
         counters[s.entity_type] = counters.get(s.entity_type, 0) + 1
-        placeholder = f"[{s.entity_type}_{counters[s.entity_type]}]"
+        placeholder = f"__PII_{nonce}_{s.entity_type}_{counters[s.entity_type]}__"
         s.placeholder = placeholder
         redacted_parts.append(text[pos : s.start])
         redacted_parts.append(placeholder)
@@ -308,11 +317,17 @@ def persist_entity_map(
 
 
 def reinject(text: str, entities: list[EntitySpan]) -> str:
-    """Substitute placeholders back to their original values in outgoing text."""
+    """Substitute placeholders back to their original values in outgoing text.
+
+    F-011: sort by placeholder length descending so longer tokens are replaced first,
+    preventing any residual substring collision (e.g. __PII_x_PERSON_10__ before
+    __PII_x_PERSON_1__). The nonce format already prevents collisions, but the sort
+    provides belt-and-suspenders safety.
+    """
     if not entities:
         return text
     out = text
-    for e in entities:
+    for e in sorted(entities, key=lambda e: len(e.placeholder), reverse=True):
         out = out.replace(e.placeholder, e.entity_value)
     return out
 

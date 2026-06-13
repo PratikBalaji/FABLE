@@ -31,7 +31,7 @@ spec:
             - configMapRef:
                 name: model-config
             - secretRef:
-                name: api-keys
+                name: agent-secrets  # F-030: only LLM keys + internal token; no DB/enc keys
           resources:
             requests:
               cpu: 200m

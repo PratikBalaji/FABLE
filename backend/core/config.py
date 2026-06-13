@@ -101,6 +101,21 @@ class Settings(BaseSettings):
     elm_cache_dir: str = Field(default="./data/elm_cache", alias="ELM_CACHE_DIR")
     elm_cache_ttl_hours: int = Field(default=24, alias="ELM_CACHE_TTL_HOURS")
 
+    # Rate limits (per IP; applied on /run and /adversarial-run)
+    rate_limit_run: str = Field(default="20/minute", alias="RATE_LIMIT_RUN")
+    rate_limit_adv: str = Field(default="5/minute", alias="RATE_LIMIT_ADV")
+
+    # CORS — comma-separated list of allowed origins; default covers local dev.
+    # Production: set CORS_ORIGINS=https://your-vercel-app.vercel.app
+    cors_origins: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
+
+    @property
+    def trusted_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    # Shared token for coordinator→agent pod auth (F-029)
+    agent_internal_token: str = Field(default="", alias="AGENT_INTERNAL_TOKEN")
+
     # Kubernetes distributed mode (local dev only; production stays Cloud Run)
     k8s_mode: bool = Field(default=False, alias="K8S_MODE")
     k8s_service_registry: str = Field(

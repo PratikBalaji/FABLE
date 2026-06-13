@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 
 from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta
 from ...core.auth import AuthedUser, get_optional_user
@@ -21,16 +21,29 @@ from ...core.lifecycle import run_task
 from ...core.adversarial_lifecycle import run_adversarial_task
 from ...core.pii import PiiRedactionFailed, persist_entity_map, redact, reinject
 from ...router.model_router import router as default_router
+from ..main import limiter
 
 router = APIRouter()
 
 
+def _require_csrf(x_fable_request: str = Header(default="")) -> None:
+    """F-008: Block plain form-based CSRF by requiring a custom header browsers
+    cannot add on cross-origin form submissions."""
+    if x_fable_request != "1":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing CSRF header X-FABLE-Request: 1",
+        )
+
+
+@limiter.limit(settings.rate_limit_run)
 @router.post("/run", response_model=RunResponse)
 async def run_collaboration(
     req: RunRequest,
     request: Request,
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
+    _csrf: None = Depends(_require_csrf),
 ) -> RunResponse:
     identity_id: str | None = None
     session_id: str | None = getattr(req, "session_id", None)
@@ -100,12 +113,14 @@ async def run_collaboration(
     )
 
 
+@limiter.limit(settings.rate_limit_adv)
 @router.post("/adversarial-run", response_model=AdversarialRunResponse)
 async def run_adversarial_collaboration(
     req: RunRequest,
     request: Request,
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
+    _csrf: None = Depends(_require_csrf),
 ) -> AdversarialRunResponse:
     """Run the 6-stage adversarial pipeline (Planner→Actor→Critic→Validator→Refiner→Judge)."""
     identity_id: str | None = None
