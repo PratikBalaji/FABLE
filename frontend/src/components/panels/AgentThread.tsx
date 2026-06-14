@@ -2,6 +2,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { AgentMessage } from "@/lib/api";
+import UserPromptBubble from "./UserPromptBubble";
 
 // Role colour map — applied inline (no Tailwind class dependency)
 const ROLE_COLORS: Record<string, string> = {
@@ -86,11 +87,13 @@ function MessageCard({ msg, index }: { msg: AgentMessage; index: number }) {
 interface Props {
   messages: AgentMessage[];
   isLoading?: boolean;
+  prompt?: string;
 }
 
-export default function AgentThread({ messages, isLoading }: Props) {
+export default function AgentThread({ messages, isLoading, prompt }: Props) {
   return (
     <div className="h-full overflow-y-auto pr-1">
+      {prompt && <UserPromptBubble prompt={prompt} />}
       <AnimatePresence mode="popLayout">
         {messages.length === 0 && !isLoading && (
           <motion.p

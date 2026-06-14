@@ -1,10 +1,13 @@
 import React from "react";
 import { motion } from "framer-motion";
 import type { MonteCarloResponse } from "@/lib/api";
+import UserPromptBubble from "./UserPromptBubble";
 
 interface Props {
   result: MonteCarloResponse | null;
   isLoading: boolean;
+  error?: string | null;
+  prompt?: string;
 }
 
 function modelShortName(id: string): string {
@@ -17,7 +20,7 @@ function scoreColor(v: number): string {
   return "#f38ba8";
 }
 
-export default function ExperimentView({ result, isLoading }: Props) {
+export default function ExperimentView({ result, isLoading, error, prompt }: Props) {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-[#cdd6f4]/40">
@@ -27,6 +30,16 @@ export default function ExperimentView({ result, isLoading }: Props) {
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
         />
         <span className="text-xs font-mono">Running Monte Carlo…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 px-6 text-center">
+        <span className="text-3xl">⚠️</span>
+        <span className="text-xs font-mono text-[#f38ba8]">{error}</span>
+        <span className="text-[10px] font-mono text-[#cdd6f4]/30">The experiment request failed. Try again.</span>
       </div>
     );
   }
@@ -47,6 +60,7 @@ export default function ExperimentView({ result, isLoading }: Props) {
 
   return (
     <div className="flex flex-col gap-6 p-4 h-full overflow-y-auto">
+      {prompt && <UserPromptBubble prompt={prompt} />}
       {/* Header */}
       <div className="flex items-center gap-3">
         <span className="text-[10px] font-mono text-[#cdd6f4]/40 uppercase tracking-widest">Monte Carlo</span>

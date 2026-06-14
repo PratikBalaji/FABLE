@@ -1,14 +1,18 @@
 """RAG pipeline: ingest → chunk → embed → store → retrieve."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Iterator
 
 import faiss
 import numpy as np
+import structlog
 
 from ..core.config import settings
 from ..core.embeddings import embed_batch as _api_embed_batch
+
+log = structlog.get_logger()
 
 
 def _chunk_text(text: str, size: int, overlap: int) -> Iterator[str]:
@@ -28,12 +32,39 @@ class VectorStore:
         self._index: faiss.IndexFlatL2 | None = None
         self._chunks: list[str] = []
         self._meta: list[dict] = []
+        self._load()
 
     def _index_path(self) -> Path:
         return self.store_path / "index.faiss"
 
     def _chunks_path(self) -> Path:
-        return self.store_path / "chunks.npy"
+        return self.store_path / "chunks.json"
+
+    def _load(self) -> None:
+        """Load a previously-persisted index + chunks/meta from disk (guarded)."""
+        try:
+            ip, cp = self._index_path(), self._chunks_path()
+            if ip.exists() and cp.exists():
+                self._index = faiss.read_index(str(ip))
+                payload = json.loads(cp.read_text(encoding="utf-8"))
+                self._chunks = payload.get("chunks", [])
+                self._meta = payload.get("meta", [])
+                log.info("vector_store_loaded", chunks=len(self._chunks))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vector_store_load_failed", err=str(exc)[:120])
+            self._index, self._chunks, self._meta = None, [], []
+
+    def _save(self) -> None:
+        """Persist index + chunks/meta so seeded data survives across processes."""
+        try:
+            if self._index is not None:
+                faiss.write_index(self._index, str(self._index_path()))
+            self._chunks_path().write_text(
+                json.dumps({"chunks": self._chunks, "meta": self._meta}),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vector_store_save_failed", err=str(exc)[:120])
 
     def ingest(self, text: str, metadata: dict | None = None) -> int:
         """Chunk, embed, and add text to the store. Returns number of chunks added."""
@@ -48,6 +79,7 @@ class VectorStore:
         self._index.add(embeddings)
         self._chunks.extend(chunks)
         self._meta.extend([metadata or {}] * len(chunks))
+        self._save()  # persist after every ingest
         return len(chunks)
 
     def retrieve(

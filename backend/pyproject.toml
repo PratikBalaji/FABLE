@@ -7,33 +7,52 @@ name = "fable-backend"
 version = "0.1.0"
 description = "F.A.B.L.E Backend"
 requires-python = ">=3.11"
+# F-038: version floors here; exact pins live in backend/requirements.lock (used by Docker).
 dependencies = [
-    "anthropic",
-    "openai",
-    "fastapi",
-    "uvicorn",
-    "pydantic",
-    "pydantic-settings",
-    "structlog",
+    "anthropic>=0.39.0",
+    "openai>=1.54.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "structlog>=24.4.0",
     # P6b: dropped sentence-transformers (+torch +transformers +huggingface-hub)
     # in favor of OpenAI text-embedding-3-small via the existing `openai` SDK.
-    "faiss-cpu",
-    "numpy",
+    "faiss-cpu==1.9.0.post1",
+    "numpy>=1.26.0,<2.0",
     # Multi-user platform (P2)
-    "supabase",
-    "httpx",
-    "pyjwt[crypto]",
-    "cryptography",
+    "supabase>=2.10.0",
+    "httpx>=0.27.0",
+    "pyjwt[crypto]>=2.10.0",
+    "cryptography>=43.0.0",
     # Privacy + identity (P4a / P6a)
     # P6a swapped Presidio + spaCy for regex + LLM extraction to fit free-tier deploy targets.
-    "itsdangerous",
-    "slowapi",
-    "sse-starlette",
+    "itsdangerous>=2.2.0",
+    "slowapi>=0.1.9",
+    "sse-starlette>=2.1.0",
+    # Document ingestion + export
+    "python-multipart>=0.0.12",
+    "aiofiles>=24.1.0",
+    "nbformat>=5.10.0",
+    "pypdf>=5.1.0",
+    "python-docx>=1.1.0",
 ]
 
 [project.optional-dependencies]
+# Local, no-API-key embeddings (EMBEDDINGS_PROVIDER=local). ONNX, ~50MB, no torch.
+# Kept optional so the slim Cloud Run image stays small unless local embedding is used.
+local-embeddings = [
+    "fastembed>=0.3.0",
+]
+# Benchmark harness figures (PDF). Optional — report.py falls back to a pgfplots .tex
+# that compiles on Overleaf without matplotlib.
+benchmark = [
+    "matplotlib>=3.7",
+]
 dev = [
-    "ruff",
-    "mypy",
-    "pytest",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
 ]

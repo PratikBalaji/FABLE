@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta, VerdictMeta, RecycledMeta
 from ...core.auth import AuthedUser, get_optional_user
 from ...core.config import settings
+from ...core.concurrency import ConcurrencyLimitExceeded
 from ...core.credentials import resolve_credential
 from ...core.guardrails import GuardrailBlocked
 from ...core.identity import resolve_identity, set_identity_cookie
@@ -99,6 +100,8 @@ async def run_collaboration(
             user_id=identity_id,
             router=active_router,
         )
+    except ConcurrencyLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail={"error": "concurrency_limit", "reason": str(exc)})
     except GuardrailBlocked as exc:
         raise HTTPException(
             status_code=400,
@@ -268,6 +271,8 @@ async def run_adversarial_collaboration(
             session_id=session_id,
             router=active_router,
         )
+    except ConcurrencyLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail={"error": "concurrency_limit", "reason": str(exc)})
     except GuardrailBlocked as exc:
         raise HTTPException(
             status_code=400,

@@ -37,6 +37,7 @@ class MemoryService:
         content: str,
         embedding: list[float],
         metadata: dict[str, Any] | None = None,
+        identity_id: str | None = None,
     ) -> None:
         db = get_db()
         meta = dict(metadata or {})
@@ -44,6 +45,9 @@ class MemoryService:
         db.table("memory_chunks").insert(
             {
                 "user_id": user_id,
+                # F-006: populate identity_id so the RLS identity backstop applies.
+                # In multi-user mode user_id already carries the identity id.
+                "identity_id": identity_id or user_id,
                 "source_type": source_type,
                 "source_id": source_id,
                 "session_id": session_id,
@@ -78,6 +82,7 @@ class MemoryService:
                     {
                         "session_id": session_id,
                         "user_id": user_id,
+                        "identity_id": user_id,  # F-006: identity backstop
                         "role": role,
                         "content": content,
                         "model_used": model_used,
@@ -91,7 +96,7 @@ class MemoryService:
             msg_id = res.data[0]["id"] if res.data else None
             self._store_chunk(
                 user_id, "chat_turn", msg_id, session_id, None, abstract_content,
-                emb, {"role": role, "model": model_used},
+                emb, {"role": role, "model": model_used}, identity_id=user_id,
             )
             db.table("chat_sessions").update(
                 {"updated_at": datetime.now(timezone.utc).isoformat()}
@@ -124,6 +129,7 @@ class MemoryService:
                 .insert(
                     {
                         "user_id": user_id,
+                        "identity_id": user_id,  # F-006: identity backstop
                         "session_id": session_id,
                         "task_id": task_id,
                         "domain": domain,
@@ -151,6 +157,7 @@ class MemoryService:
                     {
                         "run_id": run_id,
                         "user_id": user_id,
+                        "identity_id": user_id,  # F-006: identity backstop
                         "round": md.get("round", 0),
                         "seq": seq,
                         "role": m.get("role"),
@@ -171,6 +178,7 @@ class MemoryService:
                     user_id, "adversarial_final", run_id, session_id, domain,
                     abstract_content, emb,
                     {"task_id": task_id, "verdict": adversarial_meta.get("judge_verdict")},
+                    identity_id=user_id,
                 )
             return run_id
         except Exception as exc:  # noqa: BLE001

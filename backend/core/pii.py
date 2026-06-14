@@ -330,6 +330,19 @@ def _merge_spans(text: str, spans: list[EntitySpan]) -> RedactionResult:
 # Public API
 # ---------------------------------------------------------------------------
 
+def redact_text_sync(text: str) -> str:
+    """Synchronous regex-only redaction. Returns redacted text (placeholders for
+    structured PII). No LLM/network — safe for export paths like notebook generation (F-033).
+    Does NOT catch PERSON/LOC/ORG (those need the LLM/Presidio layer)."""
+    if not settings.pii_enabled or not text or not text.strip():
+        return text
+    try:
+        spans = _regex_scan(text)
+        return _merge_spans(text, spans).redacted
+    except Exception:  # noqa: BLE001
+        return text
+
+
 async def redact(text: str, router=None) -> RedactionResult:
     """Detect PII spans, replace with placeholders, return both."""
     if not settings.pii_enabled:

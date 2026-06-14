@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 
 
 class Settings(BaseSettings):
@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     embeddings_model: str = Field(default="text-embedding-3-small", alias="EMBEDDINGS_MODEL")
     embeddings_dimensions: int = Field(default=384, alias="EMBEDDINGS_DIMENSIONS")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    # Google Gemini (AI Studio) key — enables embeddings + chat via Gemini's OpenAI-compatible
+    # endpoint. When set (or EMBEDDINGS_PROVIDER=google), embeddings route to Gemini.
+    google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
     vector_store_path: str = "./data/vectorstore"
     chunk_size: int = 512
     chunk_overlap: int = 64
@@ -93,6 +96,12 @@ class Settings(BaseSettings):
 
     # AES-256-GCM master key (base64 of 32 random bytes) — encrypts provider keys + PII values
     app_encryption_key: str = Field(default="", alias="APP_ENCRYPTION_KEY")
+    # F-016 key rotation: optional multi-key map. Format: "3:<b64key>,4:<b64key>" (csv of version:key).
+    # APP_ENCRYPTION_KEY_ACTIVE selects which version new ciphertext is written with.
+    # When unset, falls back to single-key APP_ENCRYPTION_KEY (v2 format). Decrypt always
+    # selects the correct key by the version byte embedded in the ciphertext.
+    app_encryption_keys: str = Field(default="", alias="APP_ENCRYPTION_KEYS")
+    app_encryption_key_active: int = Field(default=0, alias="APP_ENCRYPTION_KEY_ACTIVE")
 
     # Pseudonymous identity cookie (HMAC-signed via itsdangerous)
     identity_cookie_name: str = Field(default="fable_id", alias="IDENTITY_COOKIE_NAME")
@@ -111,6 +120,12 @@ class Settings(BaseSettings):
     # Presidio sidecar (Phase 10) — set PRESIDIO_URL to enable; blank = regex+LLM fallback
     presidio_url: str = Field(default="", alias="PRESIDIO_URL")
 
+    # Agentic RAG (Phase 18, CRAG-lite): retrieve → grade → rewrite+retry → graded context
+    agentic_rag_enabled: bool = Field(default=True, alias="AGENTIC_RAG_ENABLED")
+    agentic_rag_max_hops: int = Field(default=2, alias="AGENTIC_RAG_MAX_HOPS")
+    agentic_rag_top_k: int = Field(default=5, alias="AGENTIC_RAG_TOP_K")
+    agentic_rag_min_relevant: int = Field(default=2, alias="AGENTIC_RAG_MIN_RELEVANT")
+
     # Memory abstraction — never store raw text in memory_chunks
     memory_abstraction_enabled: bool = Field(default=True, alias="MEMORY_ABSTRACTION_ENABLED")
     memory_abstraction_model: str = Field(default="openai/gpt-4o-mini", alias="MEMORY_ABSTRACTION_MODEL")
@@ -125,6 +140,8 @@ class Settings(BaseSettings):
     # Rate limits (per IP; applied on /run and /adversarial-run)
     rate_limit_run: str = Field(default="20/minute", alias="RATE_LIMIT_RUN")
     rate_limit_adv: str = Field(default="5/minute", alias="RATE_LIMIT_ADV")
+    # F-035: max in-flight runs per identity (in-process semaphore). 0 = unlimited.
+    max_concurrent_per_identity: int = Field(default=2, alias="MAX_CONCURRENT_PER_IDENTITY")
 
     # CORS — comma-separated list of allowed origins; default covers local dev.
     # Production: set CORS_ORIGINS=https://your-vercel-app.vercel.app
@@ -139,6 +156,8 @@ class Settings(BaseSettings):
 
     # Kubernetes distributed mode (local dev only; production stays Cloud Run)
     k8s_mode: bool = Field(default=False, alias="K8S_MODE")
+    # F-032: explicit opt-in required to run distributed dispatch under ENV=production.
+    k8s_allow_prod: bool = Field(default=False, alias="K8S_ALLOW_PROD")
     k8s_service_registry: str = Field(
         default='{"planning":"http://planning-pod:8001","execution":"http://execution-pod:8002","review":"http://review-pod:8003"}',
         alias="K8S_SERVICE_REGISTRY",
@@ -156,6 +175,16 @@ class Settings(BaseSettings):
                 "execution": "http://execution-pod:8002",
                 "review": "http://review-pod:8003",
             }
+
+    @model_validator(mode="after")
+    def _guard_k8s_in_prod(self) -> "Settings":
+        """F-032: refuse distributed K8S_MODE in production unless explicitly allowed."""
+        if self.k8s_mode and self.env == "production" and not self.k8s_allow_prod:
+            raise ValueError(
+                "K8S_MODE=true with ENV=production is blocked. Distributed agent dispatch "
+                "is for local dev; production uses Cloud Run. Set K8S_ALLOW_PROD=true to override."
+            )
+        return self
 
     @property
     def resolved_jwks_url(self) -> str:
