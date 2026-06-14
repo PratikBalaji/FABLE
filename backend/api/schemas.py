@@ -14,9 +14,16 @@ class RunRequest(BaseModel):
 class AgentMessageOut(BaseModel):
     role: str
     content: str
+    summary: str = ""
     metadata: dict = {}
     timestamp: str
     message_id: str
+
+
+class VerdictMeta(BaseModel):
+    verdict: str = "UNKNOWN"
+    score: float = 0.0
+    rationale: str = ""
 
 
 class GraphNode(BaseModel):
@@ -50,6 +57,13 @@ class GraphState(BaseModel):
     stats: GraphStats
 
 
+class RecycledMeta(BaseModel):
+    """Populated when a golden-case cache hit short-circuited the full pipeline."""
+    recycled: bool = False
+    golden_run_id: str = ""
+    similarity: float = 0.0
+
+
 class RunResponse(BaseModel):
     task_id: str
     domain: str
@@ -58,6 +72,10 @@ class RunResponse(BaseModel):
     scores: dict[str, float] = {}
     model_used: str = ""
     knowledge_graph: GraphState
+    run_summary: str = ""
+    final_answer: str = ""
+    verdict: VerdictMeta = Field(default_factory=VerdictMeta)
+    recycled_meta: RecycledMeta = Field(default_factory=RecycledMeta)
 
 
 class AdversarialMeta(BaseModel):
@@ -106,6 +124,25 @@ class MemoryHitOut(BaseModel):
 class SessionCreateRequest(BaseModel):
     domain: str
     title: str | None = None
+
+
+# ── Phase 13: Monte Carlo Experiment Mode ─────────────────────────────────────
+
+class MonteCarloRequest(BaseModel):
+    input: str
+    n_variants: int = Field(default=4, ge=1, le=8)
+    models: list[str] | None = None
+
+
+class MonteCarloResponse(BaseModel):
+    prompt: str
+    variants: list[str]
+    models: list[str]
+    responses: list[list[str]]
+    similarity_matrix: list[list[float]]
+    consensus_score: float
+    divergence_pairs: list[dict]
+    per_model_consensus: dict[str, float]
 
 
 class SessionOut(BaseModel):

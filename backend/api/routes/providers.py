@@ -44,7 +44,7 @@ async def add_provider(
         "provider": req.provider,
         "conn_type": "byok",
         "label": req.label,
-        "secret_enc": encrypt(req.api_key),
+        "secret_enc": encrypt(req.api_key, aad=user.id.encode()),
         "last4": req.api_key[-4:],
         "base_url": req.base_url,
         "status": "active",
@@ -96,7 +96,7 @@ async def test_provider(
     if not rows:
         raise HTTPException(404, "Connection not found")
     row = rows[0]
-    api_key = decrypt(row["secret_enc"])
+    api_key = decrypt(row["secret_enc"], aad=user.id.encode())
     ok, detail = await validate_key(row["provider"], api_key, row.get("base_url"))
     db.table("provider_connections").update(
         {

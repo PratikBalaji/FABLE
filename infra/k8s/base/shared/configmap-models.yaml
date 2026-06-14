@@ -11,9 +11,11 @@ data:
   # Adversarial pipeline role-to-model mapping
   PLANNER_MODEL: "anthropic/claude-sonnet-4-5"
   ACTOR_MODEL: "openai/gpt-4o"
-  ADV_CRITIC_MODEL: "meta-llama/llama-3-70b-instruct"
-  VALIDATOR_MODEL: "google/gemini-pro-1.5"
-  REFINER_MODEL: "meta-llama/llama-3-70b-instruct"
+  # Phase 12 rebalanced: Haiku-3.5 for Critic (better adversarial reasoning vs Llama),
+  # gpt-4o-mini for Validator+Refiner (structured output, eliminates model redundancy).
+  ADV_CRITIC_MODEL: "anthropic/claude-3.5-haiku"
+  VALIDATOR_MODEL: "openai/gpt-4o-mini"
+  REFINER_MODEL: "openai/gpt-4o-mini"
   JUDGE_MODEL: "anthropic/claude-sonnet-4-5"
   # Pipeline config
   ADVERSARIAL_MAX_ROUNDS: "2"

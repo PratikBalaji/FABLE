@@ -89,9 +89,11 @@ async def resolve_credential(
     row = rows[0]
     provider = row["provider"]
     base_url = row.get("base_url") or PROVIDER_BASE_URLS.get(provider, settings.openrouter_base_url)
+    # F-014: decrypt with user_id as AAD — v2 ciphertext is bound to this row's owner.
+    aad = row.get("user_id", "").encode() if row.get("user_id") else None
     return ResolvedCredential(
         provider=provider,
-        api_key=decrypt(row["secret_enc"]),
+        api_key=decrypt(row["secret_enc"], aad=aad),
         base_url=base_url,
         via=row["conn_type"],
     )

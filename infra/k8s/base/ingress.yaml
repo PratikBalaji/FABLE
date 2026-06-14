@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fable-ingress
+  namespace: fable
+  labels:
+    app.kubernetes.io/part-of: fable
+  annotations:
+    # alb.ingress.kubernetes.io/scheme is patched per overlay:
+    #   prod overlay sets ingressClassName: alb (AWS Load Balancer Controller)
+    #   local overlay leaves class unset (nginx or kind default)
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: coordinator
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: coordinator
+                port:
+                  number: 8000

@@ -412,3 +412,19 @@ as $$
 $$;
 revoke execute on function public.match_memory_chunks_by_identity(uuid, extensions.vector, int)
   from public;
+
+-- 18. pg_cron — sweep expired pii_entity_map rows (security: F-014 TTL enforcement)
+-- Requires pg_cron extension enabled in Supabase dashboard (Database → Extensions → pg_cron).
+-- Runs hourly; deletes rows where expires_at < now(). Safe to run multiple times.
+select cron.schedule(
+  'pii-entity-map-sweep',
+  '0 * * * *',
+  $$ delete from public.pii_entity_map where expires_at < now() $$
+);
+
+-- 19. pg_cron — sweep expired oauth_states rows (PKCE state tokens, short-lived)
+select cron.schedule(
+  'oauth-states-sweep',
+  '*/15 * * * *',
+  $$ delete from public.oauth_states where expires_at < now() $$
+);

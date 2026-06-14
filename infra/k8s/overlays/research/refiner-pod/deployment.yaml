@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: refiner-pod
+  namespace: fable
+  labels:
+    app: refiner-pod
+    app.kubernetes.io/part-of: fable
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: refiner-pod
+  template:
+    metadata:
+      labels:
+        app: refiner-pod
+    spec:
+      containers:
+        - name: refiner-pod
+          image: fable-agent-group:local
+          ports:
+            - containerPort: 8004
+          env:
+            - name: POD_ROLES
+              value: "adv:refiner"
+            - name: POD_PORT
+              value: "8004"
+          envFrom:
+            - configMapRef:
+                name: model-config
+            - secretRef:
+                name: agent-api-keys
+          resources:
+            requests:
+              cpu: 125m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 15
+            periodSeconds: 30

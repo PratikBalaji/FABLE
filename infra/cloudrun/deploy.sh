@@ -51,5 +51,42 @@ gcloud run deploy "${SERVICE_NAME}" \
 
 echo
 echo "✓ Deployed. Service URL:"
-gcloud run services describe "${SERVICE_NAME}" \
-  --region "${REGION}" --format='value(status.url)'
+SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+  --region "${REGION}" --format='value(status.url)')
+echo "  ${SERVICE_URL}"
+
+# ─── Cloud Armor WAF (security hardening — run once after first deploy) ───────
+# Cloud Armor for Cloud Run requires a Global External HTTPS Load Balancer + NEG.
+# Uncomment and run these commands to attach WAF rules (one-time setup):
+#
+# POLICY="${SERVICE_NAME}-armor"
+#
+# # Create security policy
+# gcloud compute security-policies create "${POLICY}" \
+#   --description "F.A.B.L.E WAF — XSS, SQLi, LFI protection"
+#
+# # Block OWASP Top-10 threats (XSS, SQLi, LFI, RFI, RCE, scanners)
+# gcloud compute security-policies rules create 1000 --security-policy "${POLICY}" \
+#   --expression "evaluatePreconfiguredExpr('xss-stable')" --action deny-403
+# gcloud compute security-policies rules create 1001 --security-policy "${POLICY}" \
+#   --expression "evaluatePreconfiguredExpr('sqli-stable')" --action deny-403
+# gcloud compute security-policies rules create 1002 --security-policy "${POLICY}" \
+#   --expression "evaluatePreconfiguredExpr('lfi-stable')" --action deny-403
+# gcloud compute security-policies rules create 1003 --security-policy "${POLICY}" \
+#   --expression "evaluatePreconfiguredExpr('rfi-stable')" --action deny-403
+# gcloud compute security-policies rules create 1004 --security-policy "${POLICY}" \
+#   --expression "evaluatePreconfiguredExpr('scannerdetection-stable')" --action deny-403
+#
+# # Rate limit: 100 req/min per IP (belt-and-suspenders alongside slowapi)
+# gcloud compute security-policies rules create 2000 --security-policy "${POLICY}" \
+#   --expression "true" --action rate-based-ban \
+#   --rate-limit-threshold-count 100 --rate-limit-threshold-interval-sec 60 \
+#   --ban-duration-sec 300
+#
+# # Attach policy to the NEG backend service (replace BACKEND_SERVICE_NAME):
+# gcloud compute backend-services update BACKEND_SERVICE_NAME \
+#   --security-policy "${POLICY}" --global
+#
+# Note: Cloud Run direct (--allow-unauthenticated) does NOT support Cloud Armor.
+# You need: Cloud Run → Serverless NEG → Backend Service → HTTPS LB → Cloud Armor.
+# See: https://cloud.google.com/armor/docs/integrating-cloud-armor-with-cloud-run

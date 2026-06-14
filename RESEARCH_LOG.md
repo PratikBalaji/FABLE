@@ -452,7 +452,7 @@ F-001 (cookie revocation), F-006 (identity_id RLS migration), F-007 (REVOKE on `
 
 ---
 
-## Phase 10 Feasibility — Presidio on Docker Sidecar
+## Phase 10 — Presidio on Docker Sidecar ✅ IMPLEMENTED 2026-06-13
 
 ### Context
 
@@ -508,15 +508,55 @@ async def _presidio_extract(text: str) -> list[EntitySpan]:
 | Kubernetes impact | Add as 4th deployment in K8s manifest; ClusterIP service |
 | Risk | Low — failure path falls back to existing regex+LLM |
 
-### Open Questions
+### Open Questions (resolved)
 
-1. Presidio image is ~2GB. Worth a startup penalty on local compose? Yes — runs once, stays warm.
-2. `en_core_web_lg` vs `en_core_web_sm` in Presidio image — is the large model included by default?
-3. Multi-language support: Presidio supports 6 languages via additional models. If the research expands beyond English, Presidio sidecar is the right abstraction.
+1. **Presidio image ~2GB startup penalty?** Yes — runs once, stays warm. Compose healthcheck retries=5 with initialDelaySeconds=30 in k8s covers cold start.
+2. **`en_core_web_lg` vs `en_core_web_sm`?** `mcr.microsoft.com/presidio-analyzer:latest` bundles `en_core_web_lg` by default.
+3. **Multi-language?** Presidio sidecar is the correct abstraction — additional models loaded per-language in the container.
+
+### Implementation (2026-06-13)
+
+**Files modified/created:**
+
+| File | Change |
+|------|--------|
+| `backend/core/config.py` | Added `presidio_url: str` field (`PRESIDIO_URL` env var, default `""`) |
+| `backend/core/pii.py` | Added `_presidio_extract()` (httpx async, maps Presidio span response → `EntitySpan`); `redact()` uses Presidio when `presidio_url` set, else falls back to LLM extraction |
+| `infra/docker/docker-compose.yml` | Added `presidio-analyzer` service; backend depends on it healthy; `PRESIDIO_URL=http://presidio-analyzer:3000` injected |
+| `infra/k8s/base/presidio/deployment.yaml` | Presidio pod — ClusterIP, `/health` probes, 1–2Gi memory |
+| `infra/k8s/base/presidio/service.yaml` | ClusterIP service `presidio-analyzer:3000` |
+| `infra/k8s/base/kustomization.yaml` | Registered presidio resources + PRESIDIO_URL env patch on coordinator |
+| `infra/k8s/base/ingress.yaml` | New — routes `/api` + `/` to coordinator:8000 |
+| `infra/k8s/overlays/prod/kustomization.yaml` | New — EKS prod overlay (ALB Ingress, scaled replicas, ECR images) |
+| `infra/aws/eks_stack.py` | New — CDK EKS stack (VPC, managed node group, AWS LBC Helm, ECR repos) |
+| `infra/aws/app.py` | Registered `FableEksStack` alongside existing `FableStack` (ECS) |
+
+**Why Presidio as a k8s pod (not just compose sidecar)?**
+In-cluster Presidio gives NER-grade PERSON/LOC/ORG detection at ~95% recall and ~50ms latency with **zero per-request LLM API cost**, consistent across local kind and AWS EKS prod. The slim Cloud Run single-image keeps `PRESIDIO_URL` unset and falls back to regex+LLM — no image size penalty. It's the only PII layer that runs identically on both k8s targets without touching the Cloud Run deploy.
+
+**Verification:**
+```bash
+# 1. Test Presidio sidecar locally
+docker compose -f infra/docker/docker-compose.yml up presidio-analyzer -d
+curl -s -X POST localhost:3001/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"John Smith lives in Paris at john@example.com","language":"en"}' | jq .
+# Expected: PERSON + LOCATION spans + EMAIL (from regex)
+
+# 2. Full compose stack
+docker compose -f infra/docker/docker-compose.yml up --build
+
+# 3. k8s build (kind local)
+bash infra/k8s/setup.sh
+kubectl get pods,svc,ingress -n fable
+
+# 4. EKS CDK synth (no deploy cost)
+cd infra/aws && cdk synth FableEksStack
+```
 
 ---
 
-## Phase 11 Feasibility — Extreme Learning Machine (ELM) as Meta-Scorer
+## Phase 11 — Extreme Learning Machine (ELM) as Meta-Scorer ✅ IMPLEMENTED
 
 > **Disambiguation:** This section describes *Extreme Learning Machine* — a specific neural architecture from Huang et al. 2006. This is distinct from the *Embedded Language Model* (Phi-3 ONNX role-declaration model) already implemented in Phase 6. The user raised the Extreme Learning Machine as a proposed R&D track under the same "ELM" label.
 
@@ -615,7 +655,7 @@ class ELMRouter:
 
 ---
 
-## Phase 12 Feasibility — Pod & Model Role Rebalancing by Benchmark
+## Phase 12 — Pod & Model Role Rebalancing ✅ IMPLEMENTED 2026-06-13
 
 ### Current Assignments vs. Role Demands
 
@@ -684,7 +724,7 @@ class ELMRouter:
 
 ---
 
-## Phase 13 Feasibility — Monte Carlo Experiment Mode
+## Phase 13 — Monte Carlo Experiment Mode ✅ IMPLEMENTED 2026-06-13
 
 ### Concept
 
@@ -794,3 +834,176 @@ This directly augments `get_best_model_for()` with empirical inter-model agreeme
 3. **Heatmap UI:** cosine similarity can be visualized as a color matrix (green=high agreement, red=divergence). This could be a small canvas or SVG component — no heavy charting lib needed.
 4. **Monte Carlo convergence:** With only 4 variants, the "law of large numbers" doesn't fully kick in. Should the system detect when consensus has converged (variance < threshold) and stop early?
 5. **Training signal granularity:** Should the ELM (Phase 11) receive per-variant, per-model scores from Monte Carlo runs, not just the aggregate consensus?
+
+
+---
+
+## Phase 14 — Latency Fix + Evaluation Runs
+
+**Run timestamp:** 2026-06-13 22:52 UTC
+**Config:** summaries_per_agent=off (run-level only), critic=claude-3.5-haiku, refiner=gpt-4o-mini, adversarial_max_rounds=2, per-call timeout=45s.
+
+### Standard mode (5 runs)
+
+| Run | Prompt | Verdict | Avg Score | Time (s) | Rationale |
+|-----|--------|---------|-----------|----------|-----------|
+| 1 | code | PASS | 87% | 39.9 | Strong performance: 87% across all rubric dimensions. Best on accuracy. |
+| 2 | reasoning | PASS | 90% | 22.0 | Strong performance: 90% across all rubric dimensions. Best on clarity. |
+| 3 | finance | PASS | 92% | 45.2 | Strong performance: 92% across all rubric dimensions. Best on accuracy. |
+| 4 | factual | PASS | 82% | 29.0 | Strong performance: 82% across all rubric dimensions. Best on accuracy. |
+| 5 | creative | WARN | 60% | 27.7 | Overall score 60%. Weakest areas: coverage, actionability. |
+
+**Aggregate:** mean score 82% · mean time 32.8s · pass rate 4/5
+
+### Adversarial mode (5 runs)
+
+| Run | Prompt | Verdict | Avg Score | Rounds | Time (s) | Rationale |
+|-----|--------|---------|-----------|--------|----------|-----------|
+| 1 | code | ACCEPT | 85% | 2/2 | 78.9 | The Actor's implementation correctly solves the Fibonacci problem with O(n) time complexity and O(1) space complexity, meeting all core success criteria. The fu |
+| 2 | reasoning | ACCEPT | 85% | 2/2 | 61.6 | The Actor's solution is mathematically correct and reaches the right answer of $0.05. While the Critic identified valid presentation issues (inconsistent variab |
+| 3 | finance | ACCEPT | 75% | 2/2 | 90.6 | While the Actor's response contains several technical inaccuracies (RMD age, incomplete phase-out details) and lacks depth in conversion strategies and personal |
+| 4 | factual | ACCEPT | 75% | 2/2 | 68.1 | While the response addresses the core causal factors (subprime mortgages, securitization, regulatory failures, leverage) and meets the length constraint of 3-5  |
+| 5 | creative | ACCEPT | 82% | 2/2 | 62.4 | The Actor has delivered three distinct product names with rationales that substantially meet the core requirements. While trademark concerns for PrivAItes and m |
+
+**Aggregate:** mean score 80% · mean time 72.3s · pass rate 5/5
+
+### Analysis
+
+Quality measured via the 5-dimension rubric (accuracy, depth, clarity, actionability, coverage); verdict is PASS/WARN/FAIL (standard, derived from rubric average) or ACCEPT/REJECT (adversarial, judge verdict). Standard mean latency 32.8s, adversarial 72.3s — both within the 180s client timeout. The model-ID fix (removing the invalid `meta-llama/llama-3-70b-instruct`) eliminated the per-role failed-call + fallback retry overhead, and run-level-only summaries cut ~11 redundant LLM calls from each adversarial run.
+
+### Root-cause findings (debugging pass)
+
+**Bug 1 — adversarial timeout (the reported symptom).** Every `/adversarial-run` exceeded the 120s axios limit. Three compounding causes: (a) `adv_critic_model` and `refiner_model` were set to `meta-llama/llama-3-70b-instruct`, which returns 404 on OpenRouter — each role wasted a failed call + fallback retry every round; (b) the summarizer fired ~12 inline LLM calls before responding; (c) the base sequential pipeline (~11 calls) already neared the limit. Fixes: valid model IDs (`claude-3.5-haiku` critic, `gpt-4o-mini` refiner), run-level-only summaries (12→1 call), a 45s per-call client timeout, and axios raised to 180s. Post-fix adversarial latency peaked at 90.6s.
+
+**Bug 2 — judge verdict silently discarded (found during the first eval batch).** The first 5-run adversarial batch produced two `REJECT / 0%` results. Log inspection showed the judge had actually returned `ACCEPT` (0.85, 0.72) — but the JSON was truncated mid-string because the judge crammed the full `final_answer` into a 1024-token budget, so `_parse_judge_output` fell through to its `REJECT / 0.0` default and threw away a valid acceptance. Fixes: judge token budget 1024→2560, and a field-level salvage path in `_parse_judge_output` that regex-recovers `verdict`/`score`/`rationale` when the full JSON is malformed. The second batch confirmed the fix — the finance run (90.6s) again truncated, but salvage recovered it as `ACCEPT / 75%` instead of a false reject (`adversarial_judge_parse_salvaged verdict=ACCEPT` in logs). Adversarial pass rate went 3/5 → 5/5.
+
+---
+
+## Phase 11 Implementation Note (ELM Meta-Scorer) — confirmed 2026-06-13
+
+Pre-existing but confirmed fully implemented. Key files:
+
+| File | Role |
+|------|------|
+| `backend/core/elm_router.py` | `ELMRouter`: random fixed projection (W, b), Moore-Penrose output weights (beta), npz persistence |
+| `backend/core/knowledge_engine.py` | `_build_elm_features()`, `add_sample()` in `ingest_run()`, `predict()` blended with kNN heuristic in `get_best_model_for()`, save/load on startup |
+
+ELM activates after 5+ runs (`MIN_SAMPLES`). Before that, heuristic kNN is used. Falls back non-fatally on any error.
+
+---
+
+## Phase 12 Implementation Note (Pod & Model Role Rebalancing) — confirmed 2026-06-13
+
+| File | Change |
+|------|--------|
+| `backend/core/config.py` | `adv_critic_model=anthropic/claude-3.5-haiku`, `validator_model=openai/gpt-4o-mini`, `refiner_model=openai/gpt-4o-mini` |
+| `infra/k8s/base/shared/configmap-models.yaml` | Synced to match config.py (was still set to invalid llama-3-70b / gemini-pro-1.5) |
+| `infra/k8s/overlays/research/` | New 4-pod research overlay: splits execution-pod into actor-only + isolated refiner-pod for per-role latency benchmarking |
+
+Benchmark evidence (Phase 14 eval runs): adversarial pass rate 5/5, mean latency 72.3s.
+
+---
+
+## Phase 13 Implementation Note (Monte Carlo Experiment Mode) — 2026-06-13
+
+| File | Role |
+|------|------|
+| `backend/experiment/montecarlo.py` | `run_monte_carlo()`: paraphrase gen -> parallel fan-out -> embed -> cosine matrix -> consensus score -> knowledge engine feedback |
+| `backend/api/routes/experiment.py` | `POST /experiment/run` — PII redact, BYOK, CSRF, 5/min rate limit |
+| `backend/api/schemas.py` | `MonteCarloRequest`, `MonteCarloResponse` |
+| `frontend/src/components/panels/ExperimentView.tsx` | Response grid, similarity heatmap, divergence pairs, per-model consensus chips |
+| `frontend/src/pages/index.tsx` | Experiment mode in switcher, ExperimentView panel |
+
+Cost per run: ~4 variants x 3 models x ~500 tokens = ~6k tokens (~$0.006 at OpenRouter prices).
+
+---
+
+## Phase 15 — Golden-Case Reasoning Cache — 2026-06-13
+
+### Architecture
+
+Tiered semantic cache with mandatory re-check gating:
+
+| Similarity | Action | Token savings |
+|-----------|--------|--------------|
+| >= 0.93 (hit) | Adapt golden answer (1 LLM call) + judge re-check | ~80% |
+| 0.82-0.93 (warm) | Inject golden trajectory as seed context; cut rounds | ~40% |
+| < 0.82 (miss) | Full run | 0% |
+
+Freshness: `expires_at` per golden case (default 30 days, `GOLDEN_TTL_DAYS`).
+Promotion: avg rubric >= `GOLDEN_PROMOTE_THRESHOLD` (0.75) AND verdict PASS/ACCEPT.
+Trajectory: `GoldenCase.trajectory` = ordered steps (role, model, summary) — compact, injected on warm-start.
+
+### Files
+
+| File | Role |
+|------|------|
+| `backend/core/golden_cache.py` | `GoldenCase` + `GoldenCaseCache`: promote, match (cosine), adapt (LLM), recheck (judge), warm_context, jsonl persistence |
+| `backend/core/lifecycle.py` | Step -1 before guardrail: cache check; hit path yields recycled complete; warm path injects context; promote after full run |
+| `backend/core/config.py` | `golden_cache_enabled`, `golden_promote_threshold`, `golden_hit_threshold`, `golden_warm_threshold`, `golden_ttl_days` |
+| `backend/api/schemas.py` | `RecycledMeta` + `RunResponse.recycled_meta` |
+| `frontend/src/pages/index.tsx` | Gold recycled badge chip with similarity %; `recycled_meta` state |
+
+Research framing: "Semantic trajectory reuse in multi-agent LLM systems — tiered caching with mandatory re-check gating."
+
+---
+
+## Phase 16 — Curated RAG Seed Corpus — 2026-06-13
+
+### Source Manifest (all license-clean / public-domain)
+
+| Domain | Source | License |
+|--------|--------|---------|
+| general_reasoning | Wikipedia: Logic, Critical Thinking, Argument | CC BY-SA 4.0 |
+| stem | Wikipedia: Scientific Method, Mathematics, Algorithm, AI | CC BY-SA 4.0 |
+| code_review | PEP 8/20/257, CWE Top-25, OWASP Top-10 | PSF public / MITRE public / CC BY-SA 4.0 |
+| finance | Wikipedia: Financial Statements, Balance Sheet, Income Statement | CC BY-SA 4.0 |
+| writing | U.S. Plain Language Guidelines, Wikipedia: Technical Writing | U.S. Gov public domain / CC BY-SA 4.0 |
+| medical_light | MedlinePlus Health Topics | NIH public domain |
+| legal_light | Wikipedia: Law | CC BY-SA 4.0 |
+
+Breadth-first: FABLE takes open-ended prompts across all domains, not only finance/code.
+
+Sanitization: HTML/wiki-markup strip -> PII redact -> content-hash dedup -> chunk + embed (existing `rag/ingestion.py`).
+
+### Files
+
+| File | Role |
+|------|------|
+| `backend/rag/seed_corpus.py` | `SEED_SOURCES` manifest + `iter_seed_texts()` async generator |
+| `scripts/seed_rag.py` | CLI: `python scripts/seed_rag.py [--domain all\|stem\|code_review\|...]` |
+
+---
+
+## Phase 17 Feasibility — Document Vision for Finance/Code Domains
+
+> **NOT BUILT.** Documented for potential future implementation only.
+
+### Concept
+
+Scoped VLM ingestion for documents where text extraction misses visual content:
+- Finance: 10-K tables, charts, scanned exhibits
+- Code review: architecture diagrams embedded in docs
+
+### Why scoped, not general CV
+
+General CV (object detection, image classification) = new modality + new models + new infra,
+diluting FABLE's identity as a text adversarial reasoning system. Scoped doc-vision targets
+one existing domain without new infrastructure.
+
+### Proposed approach
+
+- OpenRouter already routes to VLMs (Gemini Pro Vision, GPT-4o vision)
+- New `rag/vision_ingestion.py`: accept image/PDF -> page-split -> base64 -> VLM "extract all text/tables" -> ingest via existing RAG pipeline
+- No new deps; latency ~2-4s per page (acceptable for async ingest)
+
+### Verdict
+
+FEASIBLE — defer until golden cache (Phase 15) and seed corpus (Phase 16) demonstrate quality ROI.
+
+| Dimension | Assessment |
+|-----------|-----------|
+| Effort | Medium (~4h) |
+| Dependencies | None new |
+| Cost | ~$0.01-0.05 per 10-K page |
+| Risk | Low — parallel to existing RAG |

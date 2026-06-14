@@ -101,7 +101,7 @@ async def callback(code: str, state: str):
             "provider": "openrouter",
             "conn_type": "oauth",
             "label": "OpenRouter (OAuth)",
-            "secret_enc": encrypt(key),
+            "secret_enc": encrypt(key, aad=st["user_id"].encode()),
             "last4": key[-4:],
             "status": "active",
             "last_validated_at": datetime.now(timezone.utc).isoformat(),

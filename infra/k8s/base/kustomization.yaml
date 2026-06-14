@@ -21,6 +21,23 @@ resources:
   - execution-pod/service.yaml
   - review-pod/deployment.yaml
   - review-pod/service.yaml
+  # Presidio sidecar (Phase 10) — NER-grade PII detection in-cluster
+  - presidio/deployment.yaml
+  - presidio/service.yaml
+  # Ingress
+  - ingress.yaml
+
+patches:
+  # Inject PRESIDIO_URL into coordinator so pii.py uses in-cluster sidecar
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PRESIDIO_URL
+          value: "http://presidio-analyzer:3000"
+    target:
+      kind: Deployment
+      name: coordinator
 
 commonLabels:
   app.kubernetes.io/part-of: fable

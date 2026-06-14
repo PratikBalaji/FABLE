@@ -27,6 +27,8 @@ dependencies = [
     # Privacy + identity (P4a / P6a)
     # P6a swapped Presidio + spaCy for regex + LLM extraction to fit free-tier deploy targets.
     "itsdangerous",
+    "slowapi",
+    "sse-starlette",
 ]
 
 [project.optional-dependencies]
