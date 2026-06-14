@@ -157,6 +157,35 @@ def _mint(pseudonymous: bool = True, auth_user_id: str | None = None) -> dict:
 
 # --- public API ------------------------------------------------------------
 
+def is_revoked(identity_id: str) -> bool:
+    """F-001: check the revocation list. Fails OPEN to False on DB error so a transient
+    outage doesn't lock everyone out — revocation is a security backstop, not the primary gate."""
+    try:
+        res = (
+            get_db()
+            .table("revoked_identities")
+            .select("identity_id")
+            .eq("identity_id", identity_id)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("identity_revocation_check_failed", err=str(exc)[:80])
+        return False
+
+
+def revoke_identity(identity_id: str) -> None:
+    """F-001: add an identity to the revocation list. Idempotent. Service-role only."""
+    try:
+        get_db().table("revoked_identities").upsert(
+            {"identity_id": identity_id}, on_conflict="identity_id"
+        ).execute()
+        log.info("identity_revoked", identity_id=identity_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("identity_revoke_failed", err=str(exc)[:80])
+
+
 async def resolve_identity(
     request: Request, auth: AuthedUser | None = None
 ) -> Identity:
@@ -168,7 +197,7 @@ async def resolve_identity(
     # 1. Authed path: look up / mint a non-pseudonymous identity tied to auth_user_id.
     if auth is not None:
         existing = _find_by_auth(auth.id)
-        if existing:
+        if existing and not is_revoked(existing["id"]):
             _touch_last_seen(existing["id"])
             return _row_to_identity(existing)
         row = _mint(pseudonymous=False, auth_user_id=auth.id)
@@ -181,7 +210,7 @@ async def resolve_identity(
         identity_id = _read_cookie(cookie)
         if identity_id:
             found = _find_by_id(identity_id)
-            if found:
+            if found and not is_revoked(found["id"]):
                 _touch_last_seen(found["id"])
                 return _row_to_identity(found)
             # cookie referenced a missing row (cascade-deleted) → mint fresh

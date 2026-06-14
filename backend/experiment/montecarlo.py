@@ -137,9 +137,12 @@ async def run_monte_carlo(
         for i in range(len(variants))
     ]
 
-    # Step 3: Embed all responses
+    # Step 3: Embed all responses (non-fatal — degrade to empty matrix on failure)
     all_texts = list(flat_responses)
-    embeddings = embed_batch(all_texts)  # list of 384-d vectors
+    try:
+        embeddings = embed_batch(all_texts)  # list of 384-d vectors
+    except Exception:  # noqa: BLE001
+        embeddings = []
 
     if not embeddings:
         emb_matrix = np.zeros((1, 1), dtype=np.float32)

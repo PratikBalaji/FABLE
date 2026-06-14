@@ -308,6 +308,10 @@ as $$
   order by mc.embedding OPERATOR(extensions.<=>) query_embedding
   limit match_count;
 $$;
+-- F-007: deny direct RPC access from anon/authenticated roles. Memory search is
+-- only reached via the service-role backend, which scopes by the caller's user_id.
+revoke execute on function public.match_memory_chunks(uuid, extensions.vector, int)
+  from public;
 
 
 -- =========================================================
@@ -428,3 +432,13 @@ select cron.schedule(
   '*/15 * * * *',
   $$ delete from public.oauth_states where expires_at < now() $$
 );
+
+-- 20. revoked_identities — cookie/identity revocation list (F-001)
+-- A row here means resolve_identity() must reject the identity and mint a fresh one.
+create table if not exists public.revoked_identities (
+  identity_id  uuid primary key references public.identities(id) on delete cascade,
+  revoked_at   timestamptz not null default now(),
+  reason       text
+);
+alter table public.revoked_identities enable row level security;
+-- Service-role only: no anon/authenticated policies => no rows visible to those roles.

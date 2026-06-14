@@ -69,14 +69,21 @@ async def callback(code: str, state: str):
         raise HTTPException(400, "Invalid or unknown OAuth state")
     st = rows[0]
 
-    # Expiry check (defense-in-depth; states are short-lived)
+    # Expiry check (defense-in-depth; states are short-lived).
+    # F-003: fail CLOSED — if expires_at is missing or unparseable, reject the state
+    # rather than silently proceeding (prevents indefinitely-valid OAuth states).
+    raw_exp = st.get("expires_at")
+    if not raw_exp:
+        db.table("oauth_states").delete().eq("state", state).execute()
+        raise HTTPException(400, "OAuth state has no expiry; please reconnect")
     try:
-        expires_at = datetime.fromisoformat(st["expires_at"])
-        if expires_at < datetime.now(timezone.utc):
-            db.table("oauth_states").delete().eq("state", state).execute()
-            raise HTTPException(400, "OAuth state expired; please reconnect")
-    except (KeyError, ValueError):
-        pass
+        expires_at = datetime.fromisoformat(raw_exp)
+    except (TypeError, ValueError):
+        db.table("oauth_states").delete().eq("state", state).execute()
+        raise HTTPException(400, "OAuth state expiry is malformed; please reconnect")
+    if expires_at < datetime.now(timezone.utc):
+        db.table("oauth_states").delete().eq("state", state).execute()
+        raise HTTPException(400, "OAuth state expired; please reconnect")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(

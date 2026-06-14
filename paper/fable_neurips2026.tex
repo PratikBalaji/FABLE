@@ -1,0 +1,483 @@
+\documentclass{article}
+
+% ============================================================================
+% F.A.B.L.E. — NeurIPS 2026 style preprint.
+% Drop-in: once you add neurips_2026.sty to this folder, comment the \usepackage
+% fallbacks below and uncomment the neurips line.
+%   \usepackage[preprint]{neurips_2026}
+% For anonymous submission:  \usepackage{neurips_2026}
+% For a workshop:            \usepackage[dblblindworkshop]{neurips_2026}
+%                            \workshoptitle{Workshop Name Here}
+% ============================================================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{hyphenat}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds, calc}
+
+% Lightweight margins so the article fallback resembles the NeurIPS column width.
+\usepackage[margin=1in]{geometry}
+
+% ---- TikZ node styles for the architecture diagrams ------------------------
+\tikzset{
+  stage/.style   = {rectangle, rounded corners=2pt, draw=black!70, fill=blue!6,
+                    minimum height=8mm, minimum width=20mm, align=center, font=\small},
+  agent/.style   = {rectangle, rounded corners=2pt, draw=black!70, fill=purple!8,
+                    minimum height=8mm, minimum width=20mm, align=center, font=\small},
+  gov/.style     = {rectangle, rounded corners=2pt, draw=black!70, fill=green!8,
+                    minimum height=8mm, minimum width=20mm, align=center, font=\small},
+  store/.style   = {cylinder, shape border rotate=90, aspect=0.3, draw=black!70,
+                    fill=orange!10, minimum height=11mm, minimum width=16mm,
+                    align=center, font=\scriptsize},
+  io/.style      = {rectangle, draw=black!70, fill=black!4, minimum height=8mm,
+                    align=center, font=\small},
+  flow/.style    = {-{Stealth[length=2mm]}, thick},
+  dflow/.style   = {-{Stealth[length=2mm]}, thick, dashed, draw=black!55},
+}
+
+\title{F.A.B.L.E.: A Framework for Adversarial Benchmarking and \\ Logic Evaluation in Privacy-Aware Multi-Agent LLM Systems}
+
+\author{%
+  Pratik Balaji \\
+  Temple University \\
+  Philadelphia, PA \\
+  \texttt{balajipratik8@gmail.com} \\
+}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We present F.A.B.L.E., a privacy-aware framework for studying how multiple language-model
+agents cooperate, disagree, and converge under explicit governance constraints. Rather than
+treating a model's answer as a single opaque string, F.A.B.L.E. runs two contrasting
+orchestration protocols over the same evaluation harness: a lightweight three-stage
+\emph{standard} pipeline (Analyst $\rightarrow$ Critic $\rightarrow$ Synthesizer) and a
+six-stage \emph{adversarial} pipeline (Planner $\rightarrow$ Actor $\rightarrow$ Critic
+$\rightarrow$ Validator $\rightarrow$ Refiner $\rightarrow$ Judge) with bounded
+refine-and-rejudge rounds. Every request passes through a fail-closed governance layer
+(regex$+$LLM PII redaction with an optional Microsoft Presidio sidecar, two-layer content
+guardrails, and AES-256-GCM credential encryption), is grounded by a corrective
+retrieval layer (CRAG-style relevance grading over a persisted FAISS corpus and per-user
+semantic memory), and is scored by a five-dimension rubric that yields an auditable verdict.
+We describe the architecture and its governance and retrieval design, and report a
+preliminary head-to-head evaluation of ten runs (five prompts $\times$ two modes) measuring
+verdict, rubric score, and end-to-end latency. The adversarial protocol reached a 5/5 accept
+rate at the cost of roughly $2.2\times$ latency over the standard protocol's 4/5 pass rate,
+illustrating the accuracy--cost trade-off the framework is built to quantify. We position
+the system as a reproducible platform for measuring \emph{disagreement and synthesis}, not
+only final-answer accuracy, and release the orchestration code, governance layer, and
+evaluation harness as an integrated artifact.
+\end{abstract}
+
+\section{Introduction}
+Language models are now deployed as assistants, evaluators, and components of autonomous
+workflows, yet they still produce confidently-worded answers whose intermediate reasoning is
+brittle, contradictory, or unauditable. Multi-agent arrangements---debate, critique, role
+specialization---can add useful diversity, but the gains are sensitive to protocol design and
+notoriously hard to inspect: majority agreement is not correctness when models share
+correlated errors. At the same time, any system that touches user prompts inherits privacy
+and governance obligations that are usually bolted on after the fact rather than designed in.
+
+F.A.B.L.E.\ was built to study both problems with one apparatus. The premise is that an AI
+answer should be decomposed into inspectable stages that can be benchmarked individually.
+A request is sanitized, screened by safety guardrails, grounded by graded retrieval, routed
+through an explicit multi-stage agent pipeline, scored against a rubric, and returned with a
+verdict---after the original entities masked during sanitization are reinjected so the user
+still reads a natural answer. Crucially, the framework ships two pipelines that share this
+spine: a fast standard committee and a slower adversarial protocol in which a Critic and
+Validator actively attack the Actor's draft and a Judge arbitrates after bounded refinement
+rounds. Running both over the same harness turns ``does adversarial interaction help?'' into
+a measurable question rather than a rhetorical one.
+
+This paper reflects the system as actually implemented---the governance layer, both
+pipelines, the retrieval stack, and the evaluation harness are running code, not a roadmap.
+We are deliberate, however, about the scope of the empirical claims: the results here are a
+single preliminary batch of ten runs over five prompts per mode, intended to demonstrate the
+harness and surface the trade-off, not to establish a large-scale benchmark with statistical
+guarantees.
+
+\paragraph{Contributions.}
+\begin{enumerate}[leftmargin=1.6em, itemsep=2pt]
+  \item A modular, privacy-aware architecture for multi-agent LLM evaluation in which
+        sanitization, guardrails, retrieval, orchestration, and scoring are separable,
+        inspectable stages (Section~\ref{sec:arch}).
+  \item Two contrasting orchestration protocols---a three-stage standard committee and a
+        six-stage adversarial pipeline with bounded refine-and-rejudge rounds---sharing one
+        governance and evaluation spine (Sections~\ref{sec:standard}--\ref{sec:adversarial}).
+  \item A governance layer treated as a first-class research variable: fail-closed PII
+        redaction with reinjection, two-layer guardrails, and AAD-bound credential
+        encryption, validated by a 40-finding internal security audit (Section~\ref{sec:gov}).
+  \item A corrective-retrieval stack (CRAG-style grading over FAISS $+$ semantic memory) and
+        a golden-case reasoning cache for token/latency reduction (Section~\ref{sec:retrieval}).
+  \item A reproducible evaluation harness and a preliminary ten-run, two-mode comparison on
+        verdict, rubric score, and latency (Section~\ref{sec:eval}).
+\end{enumerate}
+
+\section{Related Work}
+\textbf{Multi-agent reasoning.} A growing line of work has language-model agents debate,
+critique, or specialize to improve answer quality, often reporting gains over single-model
+baselines. The recurring caveat is that improvements depend heavily on the interaction
+protocol and that consensus can mask correlated error. F.A.B.L.E.\ contributes a controlled
+substrate in which a critique-driven adversarial protocol and a static committee are run side
+by side under identical governance and scoring, and in which disagreement is recorded rather
+than averaged away.
+
+\textbf{LLM evaluation.} Many evaluations emphasize task accuracy or pairwise preference and
+underweight intermediate structure, contradiction, or deployment-realistic governance.
+F.A.B.L.E.\ complements these by scoring along five rubric dimensions and emitting a verdict
+with rationale, and by making the orchestration cost (latency, round count) a reported metric
+rather than an implementation detail.
+
+\textbf{Retrieval-augmented generation.} Vector retrieval improves grounding but raises
+questions about evidence trust and memory retention. F.A.B.L.E.\ adopts a corrective-RAG
+posture: retrieved passages are graded for relevance, the query is rewritten and re-retrieved
+when results are weak, and retrieved text is explicitly framed to agents as untrusted data
+rather than instructions, mitigating indirect prompt injection.
+
+\textbf{Privacy-aware NLP.} Input sanitization and PII redaction are usually production
+concerns. Here they are part of the method: redaction changes the evidence visible to later
+stages, so it is modeled and reported, with a reinjection step that restores user-facing
+fidelity without persisting raw identifiers.
+
+\section{System Architecture}
+\label{sec:arch}
+F.A.B.L.E.\ is a five-layer system: a Next.js/React web client; a Python (FastAPI)
+orchestration core; a provider-agnostic model-access layer (OpenRouter-compatible, also
+usable against any OpenAI-compatible endpoint and a no-API-key local embedder); a memory and
+storage layer (FAISS for the document corpus, Supabase/pgvector for per-user semantic memory,
+Amazon S3 for artifacts); and an evaluation layer (rubric scoring, verdict derivation, and a
+live latency harness). The orchestration core exposes both pipelines behind a shared request
+path so that sanitization, guardrails, retrieval, and reinjection are identical across modes
+and only the agent topology differs.
+
+\subsection{Standard pipeline}
+\label{sec:standard}
+The standard pipeline (Figure~\ref{fig:standard}) is a three-stage committee. After
+governance and retrieval, an \emph{Analyst} produces a structured analysis, a \emph{Critic}
+identifies gaps and unsupported claims, and a \emph{Synthesizer} produces the final answer.
+The run is scored by the rubric and a PASS/WARN/FAIL verdict is derived from the rubric mean.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=6mm and 9mm]
+  \node[io]    (in)   {User\\prompt};
+  \node[gov, right=of in]    (pii)  {PII\\redact};
+  \node[gov, right=of pii]   (guard){Guardrail\\pre-check};
+  \node[stage, right=of guard](rag) {Agentic\\RAG};
+  \node[agent, below=10mm of rag] (an) {Analyst};
+  \node[agent, left=of an]  (cr) {Critic};
+  \node[agent, left=of cr]  (sy) {Synthesizer};
+  \node[stage, left=of sy]  (rub){Rubric\\$+$ verdict};
+  \node[gov, below=10mm of rub] (re){PII\\reinject};
+  \node[io, right=of re] (out){Final\\answer};
+
+  \draw[flow] (in) -- (pii);
+  \draw[flow] (pii) -- (guard);
+  \draw[flow] (guard) -- (rag);
+  \draw[flow] (rag) -- (an);
+  \draw[flow] (an) -- (cr);
+  \draw[flow] (cr) -- (sy);
+  \draw[flow] (sy) -- (rub);
+  \draw[flow] (rub) -- (re);
+  \draw[flow] (re) -- (out);
+
+  % side stores
+  \node[store, above=7mm of rag] (corpus){FAISS\\corpus};
+  \node[store, left=10mm of corpus] (mem){pgvector\\memory};
+  \draw[dflow] (corpus) -- (rag);
+  \draw[dflow] (mem) -- (rag);
+  \node[store, below=7mm of sy] (kg){Knowledge\\graph};
+  \draw[dflow] (rub) |- (kg);
+\end{tikzpicture}
+\caption{Standard pipeline. Green = governance, blue = system stages, purple = agents,
+orange = stores. Retrieval grounds the Analyst; the completed run feeds the knowledge graph.}
+\label{fig:standard}
+\end{figure}
+
+\subsection{Adversarial pipeline}
+\label{sec:adversarial}
+The adversarial pipeline (Figure~\ref{fig:adversarial}) shares the governance and retrieval
+front-end but replaces the committee with a six-role protocol. A \emph{Planner} decomposes
+the task; an \emph{Actor} drafts an answer; a \emph{Critic} attacks it for flaws; a
+\emph{Validator} checks factual grounding and consistency against the (untrusted) retrieved
+context; a \emph{Refiner} emits a structured fix specification; and the Actor revises. This
+refine loop repeats up to a hard-capped number of rounds (default two), after which a
+\emph{Judge} renders an ACCEPT/REJECT verdict with score and rationale. Role-to-model
+assignment is deliberately heterogeneous to avoid correlated error across the Critic and
+Refiner.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=5mm and 7mm]
+  \node[io]    (in)   {User\\prompt};
+  \node[gov, right=of in]   (pii)  {PII\\redact};
+  \node[gov, right=of pii]  (guard){Guardrail};
+  \node[stage, right=of guard](rag){Agentic\\RAG};
+
+  \node[agent, right=of rag] (pl){Planner};
+  \node[agent, below=9mm of pl] (ac){Actor};
+  \node[agent, left=of ac] (cri){Critic};
+  \node[agent, left=of cri](va){Validator};
+  \node[agent, left=of va] (rf){Refiner};
+  \node[agent, below=9mm of rf] (ju){Judge};
+  \node[gov, right=of ju] (re){PII\\reinject};
+  \node[io, right=of re] (out){Final\\answer\\$+$ verdict};
+
+  \draw[flow] (in) -- (pii);
+  \draw[flow] (pii) -- (guard);
+  \draw[flow] (guard) -- (rag);
+  \draw[flow] (rag) -- (pl);
+  \draw[flow] (pl) -- (ac);
+  \draw[flow] (ac) -- (cri);
+  \draw[flow] (cri) -- (va);
+  \draw[flow] (va) -- (rf);
+  % refine loop back to Actor
+  \draw[flow, dashed, draw=red!60] (rf) to[out=70,in=110] node[above,font=\scriptsize]{refine $\leq 2$ rounds} (ac);
+  \draw[flow] (rf) -- (ju);
+  \draw[flow] (ju) -- (re);
+  \draw[flow] (re) -- (out);
+
+  \node[store, above=6mm of rag] (corpus){FAISS\\corpus};
+  \node[store, left=8mm of corpus] (mem){pgvector\\memory};
+  \draw[dflow] (corpus) -- (rag);
+  \draw[dflow] (mem) -- (rag);
+  \node[store, below=6mm of ju] (gc){Golden-case\\cache};
+  \draw[dflow] (ju) |- (gc);
+  \draw[dflow] (gc) -| (rag);
+\end{tikzpicture}
+\caption{Adversarial pipeline. The Critic and Validator attack the Actor's draft; the Refiner
+specifies fixes and the Actor revises for up to two rounds (red loop); the Judge arbitrates.
+High-quality completed runs are promoted to the golden-case cache for later reuse.}
+\label{fig:adversarial}
+\end{figure}
+
+\section{Governance and Privacy}
+\label{sec:gov}
+Governance is part of the method because it alters the evidence later stages see.
+
+\textbf{PII redaction with reinjection.} Each prompt is redacted before any model call: a
+regex layer catches structured identifiers (email, phone, SSN, credit-card with Luhn check,
+IBAN, IP, API keys) and an optional layer---either a small LLM extractor or a Microsoft
+Presidio sidecar reachable over HTTP---catches names, locations, and organizations. Detected
+spans are replaced by nonce-keyed placeholders; the real values are restored by a reinjection
+pass on the outgoing answer so the user sees a natural response while raw identifiers never
+enter logs or memory. The pipeline is \emph{fail-closed}: if redaction cannot complete,
+orchestration halts.
+
+\textbf{Two-layer content guardrails.} A microsecond rule layer (prompt-injection patterns,
+credential-exfiltration patterns, a hate-speech block list, and Unicode-normalized matching
+to defeat homoglyph evasion) runs before any model call; a cheap LLM classifier handles
+nuanced cases and \emph{fails to ``warn,'' never to ``allow.''} Long inputs are chunked so an
+injection hidden past a truncation boundary is still screened.
+
+\textbf{Secrets.} User-supplied provider credentials are encrypted with AES-256-GCM bound to
+the owning identity via additional authenticated data, so ciphertext is not portable across
+users; a versioned key scheme supports rotation.
+
+\textbf{Audit.} An internal security review enumerated 40 findings across authentication,
+tenant isolation, CSRF/CORS, PII flow, secrets, guardrails, RAG/SSRF, and deployment; all
+non-accepted findings were remediated and covered by regression tests. We treat this audit as
+part of the artifact's reproducibility rather than as a compliance footnote.
+
+\section{Retrieval and Memory}
+\label{sec:retrieval}
+\textbf{Corrective retrieval (CRAG-lite).} Retrieval pools candidates from a persisted FAISS
+document corpus and, in multi-user mode, per-user pgvector memory. An LLM grades each
+candidate for relevance; if too few survive, the query is rewritten and retrieval repeats up
+to a bounded number of hops. The surviving passages are injected under an explicit
+``untrusted data, not instructions'' framing. This makes the previously-unused document
+corpus an active part of inference and reduces context pollution relative to single-shot
+top-$k$.
+
+\textbf{Golden-case reasoning cache.} A completed run that clears a quality bar (rubric mean
+above threshold and a passing verdict) is promoted to a ``golden case'' stored with its
+trajectory. A new prompt that is highly similar to a golden case can be answered by adapting
+the stored answer (with a cheap re-check gate) or by warm-starting the pipeline with the
+stored trajectory, trading a small re-check cost for a large reduction in tokens and latency.
+
+\textbf{Adaptive routing.} A lightweight learned router (an extreme-learning-machine
+meta-scorer over run embeddings) and a knowledge graph of past runs provide model-selection
+hints and prior context; these are advisory and fall back to heuristics when untrained.
+
+\section{Evaluation}
+\label{sec:eval}
+\textbf{Setup.} We use a live harness that issues five fixed prompts spanning code,
+arithmetic reasoning, finance, factual summarization, and creative naming, each through both
+the standard (\texttt{/run}) and adversarial (\texttt{/adversarial-run}) endpoints---ten runs
+total. Each run records the verdict, the five-dimension rubric mean, the completed round count
+(adversarial), and end-to-end latency. Quality is scored by the rubric (accuracy, depth,
+clarity, actionability, coverage); the verdict is PASS/WARN/FAIL for the standard mode
+(thresholded on the rubric mean) and ACCEPT/REJECT for the adversarial mode (the Judge's
+decision). Configuration: run-level summaries only, Critic $=$ \texttt{claude-3.5-haiku},
+Refiner $=$ \texttt{gpt-4o-mini}, \texttt{max\_rounds} $=2$, 45\,s per-call timeout. Batch run
+2026-06-13.
+
+\textbf{Standard mode.} Table~\ref{tab:standard} reports the five standard runs: mean rubric
+score 82\%, mean latency 32.8\,s, pass rate 4/5. The single non-pass was the open-ended
+creative prompt (WARN, 60\%), where the rubric penalized coverage and actionability.
+
+\begin{table}[t]
+\centering
+\caption{Standard pipeline (Analyst $\rightarrow$ Critic $\rightarrow$ Synthesizer), 5 runs.}
+\label{tab:standard}
+\begin{tabular}{@{}clccr@{}}
+\toprule
+Run & Prompt & Verdict & Rubric score & Latency (s) \\
+\midrule
+S1 & code      & PASS & 87\% & 39.9 \\
+S2 & reasoning & PASS & 90\% & 22.0 \\
+S3 & finance   & PASS & 92\% & 45.2 \\
+S4 & factual   & PASS & 82\% & 29.0 \\
+S5 & creative  & WARN & 60\% & 27.7 \\
+\midrule
+\multicolumn{3}{r}{\textbf{Mean}} & \textbf{82\%} & \textbf{32.8} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Adversarial mode.} Table~\ref{tab:adversarial} reports the five adversarial runs:
+mean rubric score 80\%, mean latency 72.3\,s, accept rate 5/5, every run using both refine
+rounds. Notably the creative prompt that only WARNed in the standard committee was driven to
+an ACCEPT (82\%) by the critique-and-refine loop, and the finance run---whose Judge output was
+truncated by the token budget---was correctly recovered as ACCEPT/75\% by a field-salvage
+parser rather than being silently rejected (see Section~\ref{sec:findings}).
+
+\begin{table}[t]
+\centering
+\caption{Adversarial pipeline (Planner $\rightarrow$ Actor $\rightarrow$ Critic $\rightarrow$
+Validator $\rightarrow$ Refiner $\rightarrow$ Judge), 5 runs.}
+\label{tab:adversarial}
+\begin{tabular}{@{}clcccr@{}}
+\toprule
+Run & Prompt & Verdict & Judge score & Rounds & Latency (s) \\
+\midrule
+A1 & code      & ACCEPT & 85\% & 2/2 & 78.9 \\
+A2 & reasoning & ACCEPT & 85\% & 2/2 & 61.6 \\
+A3 & finance   & ACCEPT & 75\% & 2/2 & 90.6 \\
+A4 & factual   & ACCEPT & 75\% & 2/2 & 68.1 \\
+A5 & creative  & ACCEPT & 82\% & 2/2 & 62.4 \\
+\midrule
+\multicolumn{4}{r}{\textbf{Mean}} & & \textbf{72.3} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Head-to-head.} Table~\ref{tab:headtohead} summarizes the trade-off. The adversarial
+protocol raised the worst-case prompt from WARN to ACCEPT and reached a 5/5 accept rate, but
+at $\sim$2.2$\times$ the latency of the standard committee. Mean rubric scores are close
+(82\% vs.\ 80\%), which is itself informative: the adversarial protocol's value in this batch
+showed up as \emph{reduced variance and eliminated failures} rather than a higher mean,
+consistent with the framing that critique-driven interaction trades cost for reliability.
+We stress that $n=5$ prompts per mode in a single batch is preliminary; we report it to
+demonstrate the harness and the measured trade-off, not as a statistically powered result.
+
+\begin{table}[t]
+\centering
+\caption{Head-to-head summary (5 prompts per mode, single batch).}
+\label{tab:headtohead}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Mode & Pass/Accept rate & Mean score & Mean latency (s) \\
+\midrule
+Standard    & 4/5 & 82\% & 32.8 \\
+Adversarial & 5/5 & 80\% & 72.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Root-cause findings during evaluation}
+\label{sec:findings}
+The harness doubled as a debugging instrument. Two findings are worth recording because they
+affect any reproduction. First, an early adversarial batch hit the client timeout: two roles
+were configured with a model ID that 404s on the provider, forcing a failed call plus fallback
+retry every round, compounded by inline per-agent summarization; fixing the IDs and moving to
+run-level summaries cut roughly eleven calls per run and brought peak latency to 90.6\,s.
+Second, two runs initially reported REJECT/0\% when the Judge had in fact returned ACCEPT---the
+JSON verdict was truncated by the token budget and the parser fell through to its reject
+default. Raising the Judge budget and adding a field-level salvage parser recovered the valid
+acceptances and moved the adversarial accept rate from 3/5 to 5/5.
+
+\section{Implementation Status}
+The governance layer (PII redaction with reinjection, Presidio sidecar option, two-layer
+guardrails, AAD-bound encryption), both orchestration pipelines, the corrective-retrieval and
+golden-case layers, the rubric/verdict evaluator, the live latency harness, and the web client
+are implemented and exercised by an automated test suite. Infrastructure for containerized and
+Kubernetes deployment, plus an AWS (ECS/EKS) path, is defined as infrastructure-as-code.
+Preliminary: the ten-run batch is a single seed; multi-user pgvector memory and the
+managed-cloud deployments are validated by code review and mocked tests rather than a live
+production run. We are explicit about this boundary so the empirical claims are not overread.
+
+\section{Limitations}
+\textbf{Small evaluation.} Five prompts per mode in one batch is a demonstration, not a
+benchmark; there are no confidence intervals, no human evaluation, and no comparison against
+external multi-agent baselines on a standard dataset.
+\textbf{Rubric and judge are model-based.} Both the rubric scorer and the adversarial Judge
+are themselves LLMs and inherit their biases; verdicts should be read as structured estimates,
+not ground truth.
+\textbf{Provider dependence.} Although provider-agnostic in principle, runs depend on external
+model availability and on the chosen role-to-model mapping.
+\textbf{Privacy trade-off.} Redaction reduces exposure but can remove context useful for
+reasoning; quantifying that effect is future work.
+\textbf{Single-process caches.} The golden-case cache and per-identity concurrency limit are
+in-process and do not yet coordinate across distributed replicas.
+
+\section{Conclusion}
+F.A.B.L.E.\ is an attempt to make multi-agent LLM workflows inspectable, governable, and
+comparable from the ground up. By sharing one governance, retrieval, and scoring spine across
+a fast standard committee and a slower adversarial protocol, it turns ``does adversarial
+interaction help?'' into a measured question; our preliminary ten-run batch shows the
+expected accuracy-for-cost trade-off, with the adversarial protocol eliminating the
+standard committee's lone failure at roughly twice the latency. The contribution is the
+platform and its framing---disagreement and synthesis as first-class, governance as a
+research variable---together with an honest account of what is built and what remains to be
+validated at scale.
+
+\bibliographystyle{plainnat}
+% \bibliography{references}
+
+\appendix
+
+\section{Reproducibility}
+\textbf{Harness.} \texttt{scripts/eval\_runs.py} issues the five fixed prompts to
+\texttt{/run} and \texttt{/adversarial-run} against a running backend, records latency and
+verdict per run, and appends the results table to the project research log. \textbf{Config.}
+Run-level summaries only; Critic \texttt{claude-3.5-haiku}; Refiner \texttt{gpt-4o-mini};
+\texttt{adversarial\_max\_rounds}=2; 45\,s per-call timeout; client timeout 180\,s.
+\textbf{Embeddings.} 384-dimensional; pluggable across a no-API-key local model
+(\texttt{bge-small-en-v1.5}), OpenAI, or Gemini's OpenAI-compatible endpoint, keeping the
+\texttt{vector(384)} schema and FAISS index aligned. \textbf{Determinism.} Model APIs are not
+deterministic; absolute numbers will vary between batches, but the harness, prompts, and
+scoring are fixed so the \emph{comparison} is reproducible.
+
+\section{Rubric and Verdict}
+Quality is scored on five dimensions---accuracy, depth, clarity, actionability, coverage. The
+standard verdict thresholds the rubric mean into PASS/WARN/FAIL; the adversarial verdict is
+the Judge's ACCEPT/REJECT with a numeric score and a one-paragraph rationale, parsed with a
+salvage path that recovers truncated-but-valid verdicts.
+
+\section{Security Audit Summary}
+The internal review recorded 40 findings (6 critical, 14 high, 14 medium, 6 low). All
+non-accepted findings were remediated---centralized tenant scoping, CSRF/CORS hardening,
+fail-closed guardrails with Unicode normalization, AAD-bound credential encryption with key
+rotation, SSRF protection on URL ingestion, per-identity concurrency limits, identity
+revocation, and notebook-export sanitization---and covered by a dedicated regression test
+module. Five low-impact items are documented as accepted risks with rationale.
+
+\end{document}

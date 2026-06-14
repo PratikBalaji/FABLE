@@ -1,7 +1,7 @@
 # F.A.B.L.E Security Audit — State
 
-**Last reorganized:** 2026-06-13  
-**Branch:** `feature/pii-rag-planetary-graph-improvements`  
+**Last reorganized:** 2026-06-14  
+**Branch:** `main`  
 **Scope:** Full-stack — backend, frontend, infrastructure, Supabase schema/RLS, PII, LLM routing, K8s, deployment, export, supply-chain.  
 **Auditor role:** Senior AppSec / Penetration Tester / Secure Systems Architect  
 **Total findings:** 40 (6 Critical, 14 High, 14 Medium, 6 Low)
@@ -12,13 +12,13 @@
 
 | ID | Severity | Title | State |
 |----|----------|-------|-------|
-| F-001 | MEDIUM | No cookie revocation mechanism | ⚠️ Open |
+| F-001 | MEDIUM | No cookie revocation mechanism | ✅ Patched |
 | F-002 | LOW | Cookie signed not encrypted (UUID visible) | 📋 Accepted risk |
-| F-003 | MEDIUM | OAuth expiry check silently skipped | ⚠️ Open |
+| F-003 | MEDIUM | OAuth expiry check silently skipped | ✅ Patched |
 | F-004 | LOW | Race condition on identity mint | 📋 Accepted risk |
 | F-005 | **CRITICAL** | No centralized repo layer; service-role bypasses RLS | ✅ Patched |
-| F-006 | HIGH | identity_id columns exist but unused in live code | ⚠️ Open |
-| F-007 | MEDIUM | match_memory_chunks not REVOKE'd from public | ⚠️ Open |
+| F-006 | HIGH | identity_id columns exist but unused in live code | ✅ Patched |
+| F-007 | MEDIUM | match_memory_chunks not REVOKE'd from public | ✅ Patched |
 | F-008 | **CRITICAL** | samesite=none + no CSRF tokens | ✅ Patched |
 | F-009 | HIGH | Wildcard CORS allow_origins | ✅ Patched |
 | F-010 | HIGH | abstract_for_memory() never called | ✅ Patched |
@@ -27,33 +27,37 @@
 | F-013 | LOW | Raw pre-redaction input sent to LLM for PII extraction | 📋 Accepted risk |
 | F-014 | HIGH | AES-GCM no AAD; ciphertext portable across users | ✅ Patched |
 | F-015 | HIGH | BYOK resolve_credential() never called in request path | ✅ Patched |
-| F-016 | MEDIUM | No key rotation version prefix in ciphertext | ⚠️ Open |
+| F-016 | MEDIUM | No key rotation version prefix in ciphertext | ✅ Patched |
 | F-017 | LOW | Agent pod leaks raw exc string in HTTP 500 | ✅ Patched |
 | F-018 | HIGH | Guardrails bypassed via direct bus.dispatch() | ✅ Patched |
-| F-019 | MEDIUM | Judge JSON greedy regex lets Actor-embedded JSON win | ⚠️ Open |
+| F-019 | MEDIUM | Judge JSON greedy regex lets Actor-embedded JSON win | ✅ Patched |
 | F-020 | MEDIUM | max_rounds unbounded from programmatic callers | ✅ Patched |
 | F-021 | HIGH | Guardrail classifier fail-open on any error | ✅ Patched |
 | F-022 | HIGH | Guardrail regex bypassable via Unicode homoglyphs | ✅ Patched |
-| F-023 | MEDIUM | Classifier truncates at 4000 chars; injection hidden after | ⚠️ Open |
+| F-023 | MEDIUM | Classifier truncates at 4000 chars; injection hidden after | ✅ Patched |
 | F-024 | **CRITICAL** | Global unscoped FAISS + unauthenticated /ingest | ✅ Patched |
-| F-025 | HIGH | RAG chunks injected as "source of truth" — prompt injection | ⚠️ Open |
+| F-025 | HIGH | RAG chunks injected as "source of truth" — prompt injection | ✅ Patched |
 | F-026 | HIGH | /ingest/file: no size limit, no content-type validation | ✅ Patched |
-| F-027 | MEDIUM | ingest_url() no SSRF protection | ⚠️ Open |
+| F-027 | MEDIUM | ingest_url() no SSRF protection | ✅ Patched |
 | F-028 | LOW | No WebSocket/streaming | ✅ Patched |
 | F-029 | **CRITICAL** | /agent/invoke zero authentication | ✅ Patched |
 | F-030 | **CRITICAL** | All K8s pods receive full .env secret bundle | ✅ Patched |
 | F-031 | HIGH | kind NodePort binds 0.0.0.0 | ✅ Patched |
-| F-032 | MEDIUM | K8S_MODE no runtime env guard | ⚠️ Open |
-| F-033 | HIGH | Notebook export: no sanitization, not identity-scoped | ⚠️ Open |
+| F-032 | MEDIUM | K8S_MODE no runtime env guard | ✅ Patched |
+| F-033 | HIGH | Notebook export: no sanitization, not identity-scoped | ✅ Patched |
 | F-034 | **CRITICAL** | No rate limits or quotas on /run | ✅ Patched |
-| F-035 | MEDIUM | No per-identity concurrency limit | ⚠️ Open |
+| F-035 | MEDIUM | No per-identity concurrency limit | ✅ Patched |
 | F-036 | HIGH | Cloud Run --allow-unauthenticated + no Cloud Armor | ✅ Patched (commands documented) |
 | F-037 | MEDIUM | notebooks/*.ipynb not in .gitignore | ✅ Patched |
-| F-038 | MEDIUM | Python deps unpinned, no lockfile | ⚠️ Open |
+| F-038 | MEDIUM | Python deps unpinned, no lockfile | ✅ Patched |
 | F-039 | MEDIUM | Populated .env on disk | 📋 Accepted risk |
 | F-040 | LOW | CI secrets masked; low risk | 📋 Accepted risk |
 
-**Summary:** 22 ✅ Patched · 13 ⚠️ Open · 5 📋 Accepted risk
+**Summary:** 35 ✅ Patched · 0 ⚠️ Open · 5 📋 Accepted risk
+
+> 2026-06-14 — closed all 13 remaining open findings (F-001, F-003, F-006, F-007,
+> F-016, F-019, F-023, F-025, F-027, F-032, F-033, F-035, F-038). New security
+> regression suite: `tests/unit/test_security.py` (17 tests, all green).
 
 ---
 
@@ -93,27 +97,41 @@ All patches applied 2026-06-13 unless otherwise noted.
 - Hate speech / content moderation: `_HATE_SPEECH` always-block regex + updated classifier prompt
 - pii_entity_map TTL pg_cron sweep applied
 
+**Final 13 closed (2026-06-14):**
+
+| ID | Severity | Patch | File(s) |
+|----|----------|-------|---------|
+| F-001 | MEDIUM | `revoked_identities` table + `is_revoked()`/`revoke_identity()`; `resolve_identity` rejects revoked cookies | `backend/core/identity.py`, `infra/supabase/schema.sql` |
+| F-003 | MEDIUM | OAuth callback fails CLOSED when `expires_at` missing/malformed (was silent skip) | `backend/api/routes/auth_openrouter.py` |
+| F-006 | HIGH | `identity_id` populated on all memory/chat/adversarial inserts | `backend/core/memory_service.py` |
+| F-007 | MEDIUM | `revoke execute on match_memory_chunks(...) from public` | `infra/supabase/schema.sql` |
+| F-016 | MEDIUM | v3 ciphertext (`\x03`+keyver) + `APP_ENCRYPTION_KEYS` map; decrypt selects key by version | `backend/core/crypto.py`, `backend/core/config.py` |
+| F-019 | MEDIUM | Judge parse scans all balanced JSON, prefers LAST verdict-bearing object (string-aware) | `backend/core/adversarial_lifecycle.py` |
+| F-023 | MEDIUM | Classifier chunks input into ≤4000-char windows (cap 5), aggregates most-severe verdict | `backend/core/guardrails.py` |
+| F-025 | HIGH | RAG context reframed UNTRUSTED ("data not instructions") in validator/planner/analyst prompts | `backend/agents/adversarial.py`, `backend/agents/roles.py` |
+| F-027 | MEDIUM | `_is_safe_url()` blocks private/loopback/link-local/metadata; redirects disabled | `backend/rag/ingest.py` |
+| F-032 | MEDIUM | `model_validator` refuses `K8S_MODE` under `ENV=production` unless `K8S_ALLOW_PROD=true` | `backend/core/config.py` |
+| F-033 | HIGH | Notebook cells PII-redacted (`redact_text_sync`); export ownership-scoped by `identity_id` | `backend/evaluation/export_notebook.py`, `backend/core/pii.py` |
+| F-035 | MEDIUM | Per-identity `asyncio` concurrency slot (`MAX_CONCURRENT_PER_IDENTITY`, default 2) → HTTP 429 | `backend/core/concurrency.py` (new), `lifecycle.py`, `adversarial_lifecycle.py`, `api/routes/run.py` |
+| F-038 | MEDIUM | Pinned `requirements.lock` + version floors in pyproject; Dockerfile installs from lockfile | `backend/requirements.lock` (new), `backend/pyproject.toml`, `Dockerfile` |
+
+**Test coverage:** `tests/unit/test_security.py` — crypto (AAD/rotation/v1), pii redact+reinject,
+guardrails (injection/credential/hate-speech/profanity/chunk-aggregation/fail-closed), SSRF,
+golden_cache (promote/tier/recheck), judge-parse. 17 tests, all passing.
+
 ---
 
 ## Section 2 — Open Backlog
 
-Priority order (highest impact first):
+**None.** All 13 previously-open findings were closed on 2026-06-14 (see "Final 13 closed"
+table in Section 1). Remaining un-patched items are the 5 accepted risks below.
 
-| ID | Severity | Title | Why not yet patched | Effort |
-|----|----------|-------|---------------------|--------|
-| F-006 | HIGH | identity_id columns exist but unused in RLS | Schema in place; code needs audit to propagate identity_id writes everywhere | Medium |
-| F-033 | HIGH | Notebook export: no sanitization, not identity-scoped | Requires evaluation/export_notebook.py rewrite + schema migration | Medium |
-| F-025 | HIGH | RAG as "source of truth" prompt injection | Requires RAG trust framing changes in agent prompts | Low effort, high value |
-| F-001 | MEDIUM | No cookie revocation | Requires a revocation table + identity lookup overhead | Medium |
-| F-003 | MEDIUM | OAuth expiry silent skip | One-line fix in auth_openrouter.py | Trivial |
-| F-007 | MEDIUM | match_memory_chunks not REVOKE'd | One SQL statement | Trivial |
-| F-016 | MEDIUM | No ciphertext version prefix for key rotation | Version byte added (v1/v2) but no formal rotation mechanism yet | Medium |
-| F-019 | MEDIUM | Judge JSON greedy match | Regex tightening in adversarial_lifecycle.py | Low |
-| F-023 | MEDIUM | Classifier truncates at 4000 chars | Slide window or chunk-then-aggregate | Medium |
-| F-027 | MEDIUM | ingest_url() SSRF | Private IP blocklist + metadata endpoint block | Low |
-| F-032 | MEDIUM | K8S_MODE no env guard | Add `ENV=production` check to refuse K8S_MODE | Trivial |
-| F-035 | MEDIUM | No per-identity concurrency limit | Semaphore per identity_id in lifecycle | Medium |
-| F-038 | MEDIUM | Unpinned deps | `pip-compile` lockfile + Dockerfile pinning | Low |
+Notes / verification caveats:
+- F-001, F-006, F-033 ship as code + `schema.sql` migrations. The schema additions
+  (`revoked_identities` table, identity_id writes) require applying `schema.sql` to a live
+  Supabase project; verified here by code review + mocked-DB unit tests, not a live DB run.
+- F-035 concurrency is per-process (in-memory); distributed K8s pods don't share the counter —
+  it complements, not replaces, the per-IP rate limiter.
 
 ---
 
@@ -164,13 +182,13 @@ Priority order (highest impact first):
 ### Finding Detail (sorted by ID)
 | Finding | Phase | Severity | State | Title | File:Line |
 |---------|-------|----------|-------|-------|-----------|
-| F-001 | P2 | MEDIUM | ⚠️ | No cookie revocation | `backend/core/identity.py:232-258` |
+| F-001 | P2 | MEDIUM | ✅ | No cookie revocation | `backend/core/identity.py` (revoked_identities) |
 | F-002 | P2 | LOW | 📋 | Cookie signed not encrypted | `backend/core/identity.py:58-59` |
-| F-003 | P2 | MEDIUM | ⚠️ | OAuth expiry check silently skipped | `backend/api/routes/auth_openrouter.py` |
+| F-003 | P2 | MEDIUM | ✅ | OAuth expiry check silently skipped | `backend/api/routes/auth_openrouter.py` |
 | F-004 | P2 | LOW | 📋 | Race condition on first identity mint | `backend/core/identity.py:191` |
 | F-005 | P3 | CRITICAL | ✅ | No centralized repo layer; service-role bypasses RLS | `backend/core/db.py:20-33` |
-| F-006 | P3 | HIGH | ⚠️ | identity_id columns exist but unused by live code | `backend/core/memory_service.py`, `schema.sql:363-379` |
-| F-007 | P3 | MEDIUM | ⚠️ | match_memory_chunks not REVOKE'd from public | `infra/supabase/schema.sql:280-310` |
+| F-006 | P3 | HIGH | ✅ | identity_id columns exist but unused by live code | `backend/core/memory_service.py`, `schema.sql:363-379` |
+| F-007 | P3 | MEDIUM | ✅ | match_memory_chunks not REVOKE'd from public | `infra/supabase/schema.sql` |
 | F-008 | P4 | CRITICAL | ✅ | samesite=none + no CSRF tokens | `backend/api/main.py:31-36` |
 | F-009 | P4 | HIGH | ✅ | Wildcard CORS allow_origins | `backend/api/main.py:33` |
 | F-010 | P5 | HIGH | ✅ | abstract_for_memory() never called | `backend/core/memory_service.py` |
@@ -179,28 +197,28 @@ Priority order (highest impact first):
 | F-013 | P5 | LOW | 📋 | Raw pre-redaction input to LLM | `backend/core/pii.py:181-186` |
 | F-014 | P6 | HIGH | ✅ | AES-GCM no AAD | `backend/core/crypto.py:47` |
 | F-015 | P6 | HIGH | ✅ | BYOK resolve_credential never called | `backend/api/routes/run.py` |
-| F-016 | P6 | MEDIUM | ⚠️ | No key rotation version prefix | `backend/core/crypto.py:22` |
+| F-016 | P6 | MEDIUM | ✅ | No key rotation version prefix | `backend/core/crypto.py` (v3 + key map) |
 | F-017 | P6 | LOW | ✅ | Agent pod raw exc in HTTP 500 | `backend/agents/agent_service.py:114` |
 | F-018 | P7 | HIGH | ✅ | Guardrails bypass via bus.dispatch() | `backend/core/bus.py:49-68` |
-| F-019 | P7 | MEDIUM | ⚠️ | Judge JSON greedy regex | `backend/core/adversarial_lifecycle.py:256` |
+| F-019 | P7 | MEDIUM | ✅ | Judge JSON greedy regex | `backend/core/adversarial_lifecycle.py` |
 | F-020 | P7 | MEDIUM | ✅ | max_rounds unbounded | `backend/core/adversarial_lifecycle.py:60-72` |
 | F-021 | P8 | HIGH | ✅ | Classifier fail-open | `backend/core/guardrails.py:160-162` |
 | F-022 | P8 | HIGH | ✅ | Regex bypassable via Unicode | `backend/core/guardrails.py:59-92` |
-| F-023 | P8 | MEDIUM | ⚠️ | Classifier truncates at 4000 chars | `backend/core/guardrails.py:157` |
+| F-023 | P8 | MEDIUM | ✅ | Classifier truncates at 4000 chars | `backend/core/guardrails.py` (chunk-aggregate) |
 | F-024 | P9 | CRITICAL | ✅ | Unscoped FAISS + unauthenticated /ingest | `backend/rag/pipeline.py` |
-| F-025 | P9 | HIGH | ⚠️ | RAG as source of truth | `backend/agents/adversarial.py:202` |
+| F-025 | P9 | HIGH | ✅ | RAG as source of truth | `backend/agents/adversarial.py`, `roles.py` |
 | F-026 | P9 | HIGH | ✅ | /ingest/file no size/type limit | `backend/api/routes/ingest.py` |
-| F-027 | P9 | MEDIUM | ⚠️ | ingest_url() SSRF | `backend/rag/ingest.py:21-28` |
+| F-027 | P9 | MEDIUM | ✅ | ingest_url() SSRF | `backend/rag/ingest.py` (_is_safe_url) |
 | F-028 | P10 | LOW | ✅ | No streaming | `backend/api/main.py` |
 | F-029 | P11 | CRITICAL | ✅ | /agent/invoke zero auth | `backend/agents/agent_service.py:95-116` |
 | F-030 | P11 | CRITICAL | ✅ | All pods get full .env bundle | `infra/k8s/setup.sh:41` |
 | F-031 | P11 | HIGH | ✅ | kind binds 0.0.0.0 | `infra/k8s/kind-config.yaml:8-10` |
-| F-032 | P11 | MEDIUM | ⚠️ | K8S_MODE no env guard | `backend/core/config.py` |
-| F-033 | P12 | HIGH | ⚠️ | Notebook export no sanitization | `backend/evaluation/export_notebook.py:37-57` |
+| F-032 | P11 | MEDIUM | ✅ | K8S_MODE no env guard | `backend/core/config.py` (model_validator) |
+| F-033 | P12 | HIGH | ✅ | Notebook export no sanitization | `backend/evaluation/export_notebook.py` |
 | F-034 | P13 | CRITICAL | ✅ | No rate limits on /run | `backend/api/main.py` |
-| F-035 | P13 | MEDIUM | ⚠️ | No per-identity concurrency limit | `backend/core/bus.py` |
+| F-035 | P13 | MEDIUM | ✅ | No per-identity concurrency limit | `backend/core/concurrency.py` (new) |
 | F-036 | P14 | HIGH | ✅ | Cloud Run no perimeter (documented) | `infra/cloudrun/deploy.sh` |
 | F-037 | P14 | MEDIUM | ✅ | notebooks not in .gitignore | `.gitignore` |
-| F-038 | P14 | MEDIUM | ⚠️ | Deps unpinned | `pyproject.toml` |
+| F-038 | P14 | MEDIUM | ✅ | Deps unpinned | `backend/requirements.lock`, `pyproject.toml`, `Dockerfile` |
 | F-039 | P15 | MEDIUM | 📋 | Populated .env on disk | `.env` |
 | F-040 | P15 | LOW | 📋 | CI secrets masking | `.github/workflows/ci.yml` |

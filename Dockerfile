@@ -16,32 +16,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy pyproject first for Docker layer caching.
-COPY pyproject.toml ./
+# Copy the pinned lockfile first for Docker layer caching.
+# F-038: install exact pinned versions from requirements.lock for reproducible builds.
+COPY backend/requirements.lock ./requirements.lock
 
-# Install runtime deps. We pin via pyproject; `pip install .` would need source so we
-# do an explicit dep install (faster, avoids editable-build overhead at runtime).
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install \
-        "openai>=1.30.0" \
-        "fastapi>=0.111.0" \
-        "uvicorn[standard]>=0.30.0" \
-        "pydantic>=2.7.0" \
-        "pydantic-settings>=2.3.0" \
-        "httpx>=0.27.0" \
-        "faiss-cpu==1.9.0.post1" \
-        "numpy" \
-        "supabase>=2.5.0" \
-        "structlog>=24.2.0" \
-        "PyJWT[crypto]>=2.8.0" \
-        "itsdangerous>=2.2.0" \
-        "cryptography>=41.0.0" \
-        "python-multipart>=0.0.9" \
-        "aiofiles>=23.2.1" \
-        "nbformat>=5.10.0" \
-        "slowapi>=0.1.9" \
-        "pypdf>=4.0.0" \
-        "python-docx>=1.1.0"
+    && pip install --require-hashes=false -r requirements.lock
 
 # Copy application code.
 COPY backend/ ./backend/

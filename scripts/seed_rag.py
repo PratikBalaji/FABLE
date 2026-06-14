@@ -43,9 +43,9 @@ async def _ingest_text(text: str, source: str, domain: str, dry_run: bool) -> in
         clean = text  # non-fatal — proceed with original
 
     # Lazy import to avoid loading the full stack at parse time
-    from backend.rag.ingestion import ingest_text
+    from backend.rag.pipeline import vector_store
     try:
-        chunks = ingest_text(clean, source=f"seed:{domain}:{source}")
+        chunks = vector_store.ingest(clean, metadata={"source": f"seed:{domain}:{source}"})
         return chunks
     except Exception as exc:
         print(f"  ✗ Ingest failed for {source}: {exc}")
@@ -53,6 +53,12 @@ async def _ingest_text(text: str, source: str, domain: str, dry_run: bool) -> in
 
 
 async def main() -> None:
+    # Windows consoles default to cp1252 and crash on ✓/→/— glyphs — force UTF-8.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Seed FABLE RAG with curated corpora.")
     parser.add_argument(
         "--domain",

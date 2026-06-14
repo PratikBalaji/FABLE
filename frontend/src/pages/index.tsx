@@ -23,6 +23,8 @@ import {
   type MonteCarloResponse,
 } from "@/lib/api";
 import ExperimentView from "@/components/panels/ExperimentView";
+import HistorySidebar from "@/components/HistorySidebar";
+import { saveEntry, type HistoryEntry } from "@/lib/history";
 
 const PlanetaryGraph = dynamic(
   () => import("@/components/graph/PlanetaryGraph"),
@@ -30,18 +32,19 @@ const PlanetaryGraph = dynamic(
 );
 
 type Mode = "standard" | "adversarial" | "experiment";
-type View = "graph" | "warroom" | "thread" | "experiment";
+type View = "graph" | "warroom" | "thread";
 
 const MODE_OPTIONS  = [
   { value: "standard"    as Mode, label: "Standard" },
   { value: "adversarial" as Mode, label: "Adversarial" },
   { value: "experiment"  as Mode, label: "Experiment" },
 ];
+// Experiment is a MODE, not a view — when mode==="experiment" the canvas shows
+// ExperimentView directly and the view switcher is hidden.
 const VIEW_OPTIONS  = [
   { value: "graph"      as View, label: "Universe" },
   { value: "warroom"    as View, label: "War Room" },
   { value: "thread"     as View, label: "Thread" },
-  { value: "experiment" as View, label: "Experiment" },
 ];
 
 // ─── Judge verdict chip ───────────────────────────────────────────────────────
@@ -89,6 +92,9 @@ export default function Home() {
   const [uploadStatus,   setUploadStatus]   = useState<string | null>(null);
   const [experimentResult, setExperimentResult] = useState<MonteCarloResponse | null>(null);
   const [recycledMeta,     setRecycledMeta]     = useState<RecycledMeta | null>(null);
+  const [submittedPrompt,  setSubmittedPrompt]  = useState<string>("");
+  const [historyOpen,      setHistoryOpen]      = useState(false);
+  const [historyRefresh,   setHistoryRefresh]   = useState(0);
 
   useEffect(() => {
     getGraph().then(setGraphState).catch(() => {});
@@ -119,6 +125,7 @@ export default function Home() {
     async (e: React.FormEvent) => {
       e.preventDefault();
       if (!input.trim() || isLoading) return;
+      const promptText = input;
       setIsLoading(true);
       setError(null);
       setMessages([]);
@@ -128,14 +135,17 @@ export default function Home() {
       setFinalAnswer("");
       setVerdict(null);
       setRecycledMeta(null);
+      setExperimentResult(null);
+      setSubmittedPrompt(promptText);
 
       try {
         if (mode === "experiment") {
-          const result = await runExperiment({ input, n_variants: 4 });
+          const result = await runExperiment({ input: promptText, n_variants: 4 });
           setExperimentResult(result);
-          setActiveView("experiment");
+          saveEntry("experiment", promptText, { kind: "experiment", result });
+          setHistoryRefresh((n) => n + 1);
         } else if (mode === "adversarial") {
-          const result: AdversarialRunResponse = await runAdversarialTask({ input });
+          const result: AdversarialRunResponse = await runAdversarialTask({ input: promptText });
           setMessages(result.messages);
           setTaskId(result.task_id);
           setScores(result.scores);
@@ -146,11 +156,30 @@ export default function Home() {
           setFinalAnswer(result.final_answer ?? "");
           setVerdict(result.verdict ?? null);
           if (activeView === "graph") setActiveView("warroom");
+          saveEntry("adversarial", promptText, {
+            kind: "adversarial",
+            messages: result.messages,
+            scores: result.scores,
+            modelUsed: result.model_used,
+            graphState: result.knowledge_graph,
+            runSummary: result.run_summary ?? "",
+            finalAnswer: result.final_answer ?? "",
+            verdict: result.verdict ?? null,
+            adversarialMeta: result.adversarial_meta ?? null,
+          });
+          setHistoryRefresh((n) => n + 1);
         } else {
           // SSE streaming — messages appear as each agent completes
-          for await (const event of runTaskStream({ input })) {
+          const streamed: AgentMessage[] = [];
+          let completePayload: {
+            scores: Record<string, number>; modelUsed: string;
+            graphState: GraphState | null; runSummary: string;
+            finalAnswer: string; verdict: VerdictMeta | null; recycledMeta: RecycledMeta | null;
+          } | null = null;
+          for await (const event of runTaskStream({ input: promptText })) {
             if (event.type === "agent_message") {
               const { type: _t, ...msg } = event;
+              streamed.push(msg as AgentMessage);
               setMessages((prev) => [...prev, msg as AgentMessage]);
               if (activeView === "graph") setActiveView("warroom");
             } else if (event.type === "complete") {
@@ -161,10 +190,30 @@ export default function Home() {
               setRunSummary(event.run_summary ?? "");
               setFinalAnswer(event.final_answer ?? "");
               setVerdict(event.verdict ?? null);
-              if ((event as any).recycled_meta?.recycled) setRecycledMeta((event as any).recycled_meta);
+              const rm = (event as any).recycled_meta?.recycled ? (event as any).recycled_meta : null;
+              if (rm) setRecycledMeta(rm);
+              completePayload = {
+                scores: event.scores, modelUsed: event.model_used,
+                graphState: event.knowledge_graph, runSummary: event.run_summary ?? "",
+                finalAnswer: event.final_answer ?? "", verdict: event.verdict ?? null, recycledMeta: rm,
+              };
             } else if (event.type === "error") {
               throw new Error(event.detail);
             }
+          }
+          if (completePayload) {
+            saveEntry("standard", promptText, {
+              kind: "standard",
+              messages: streamed,
+              scores: completePayload.scores,
+              modelUsed: completePayload.modelUsed,
+              graphState: completePayload.graphState,
+              runSummary: completePayload.runSummary,
+              finalAnswer: completePayload.finalAnswer,
+              verdict: completePayload.verdict,
+              recycledMeta: completePayload.recycledMeta,
+            });
+            setHistoryRefresh((n) => n + 1);
           }
         }
       } catch (err: unknown) {
@@ -175,6 +224,31 @@ export default function Home() {
     },
     [input, isLoading, mode, activeView]
   );
+
+  // Restore a past run from history (no network call)
+  const handleSelectHistory = useCallback((entry: HistoryEntry) => {
+    setError(null);
+    setSubmittedPrompt(entry.prompt);
+    const p = entry.payload;
+    if (p.kind === "experiment") {
+      setExperimentResult(p.result);
+      setMode("experiment");
+    } else {
+      setExperimentResult(null);
+      setMessages(p.messages);
+      setScores(p.scores);
+      setModelUsed(p.modelUsed);
+      setGraphState(p.graphState);
+      setRunSummary(p.runSummary);
+      setFinalAnswer(p.finalAnswer);
+      setVerdict(p.verdict);
+      setAdversarialMeta(p.adversarialMeta ?? null);
+      setRecycledMeta(p.recycledMeta ?? null);
+      setMode(p.kind);
+      setActiveView("warroom");
+    }
+    setHistoryOpen(false);
+  }, []);
 
   const pipeline =
     mode === "adversarial"
@@ -199,8 +273,16 @@ export default function Home() {
           boxShadow: "0 1px 0 rgba(180,160,232,0.07)",
         }}
       >
-        {/* Brand */}
-        <div className="flex flex-col leading-none select-none">
+        {/* History toggle + Brand */}
+        <div className="flex items-center gap-3 leading-none select-none">
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="text-[#9494aa] hover:text-[#cba6f7] transition-colors text-base"
+            title="Chat history"
+            aria-label="Open history"
+          >
+            ☰
+          </button>
           <span
             className="font-bold text-lg tracking-[0.16em] uppercase"
             style={{
@@ -221,6 +303,11 @@ export default function Home() {
               setMode(m);
               setMessages([]);
               setAdversarialMeta(null);
+              setExperimentResult(null);
+              setSubmittedPrompt("");
+              if (m !== "experiment" && activeView !== "warroom" && activeView !== "thread") {
+                setActiveView("warroom");
+              }
             }}
             size="sm"
           />
@@ -287,18 +374,20 @@ export default function Home() {
         </div>
       </header>
 
-      {/* ─── View pill switcher (below menubar, centred) ──────────────────────── */}
-      <div
-        className="fixed z-40 flex justify-center"
-        style={{ top: 60, insetInline: 0 }}
-      >
-        <PillSwitcher
-          options={VIEW_OPTIONS}
-          value={activeView}
-          onChange={setActiveView}
-          size="sm"
-        />
-      </div>
+      {/* ─── View pill switcher (hidden in Experiment mode — it has no sub-views) ─ */}
+      {mode !== "experiment" && (
+        <div
+          className="fixed z-40 flex justify-center"
+          style={{ top: 60, insetInline: 0 }}
+        >
+          <PillSwitcher
+            options={VIEW_OPTIONS}
+            value={activeView}
+            onChange={setActiveView}
+            size="sm"
+          />
+        </div>
+      )}
 
       {/* ─── Main canvas ──────────────────────────────────────────────────────── */}
       <main
@@ -307,7 +396,23 @@ export default function Home() {
       >
         <div className="h-full overflow-hidden">
           <AnimatePresence mode="wait">
-            {activeView === "graph" && (
+            {mode === "experiment" ? (
+              <motion.div
+                key="experiment"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.22 }}
+                className="h-full max-w-5xl mx-auto"
+              >
+                <ExperimentView
+                  result={experimentResult}
+                  isLoading={isLoading}
+                  error={error}
+                  prompt={submittedPrompt}
+                />
+              </motion.div>
+            ) : activeView === "graph" ? (
               <motion.div
                 key="graph"
                 initial={{ opacity: 0 }}
@@ -318,8 +423,7 @@ export default function Home() {
               >
                 <PlanetaryGraph graphState={graphState} />
               </motion.div>
-            )}
-            {activeView === "warroom" && (
+            ) : activeView === "warroom" ? (
               <motion.div
                 key="warroom"
                 initial={{ opacity: 0 }}
@@ -338,10 +442,10 @@ export default function Home() {
                   finalAnswer={finalAnswer}
                   adversarialMeta={adversarialMeta}
                   pipeline={pipeline}
+                  prompt={submittedPrompt}
                 />
               </motion.div>
-            )}
-            {activeView === "thread" && (
+            ) : (
               <motion.div
                 key="thread"
                 initial={{ opacity: 0 }}
@@ -350,19 +454,7 @@ export default function Home() {
                 transition={{ duration: 0.22 }}
                 className="h-full px-6 py-4 max-w-3xl mx-auto"
               >
-                <AgentThread messages={messages} isLoading={isLoading} />
-              </motion.div>
-            )}
-            {activeView === "experiment" && (
-              <motion.div
-                key="experiment"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                className="h-full max-w-5xl mx-auto"
-              >
-                <ExperimentView result={experimentResult} isLoading={isLoading} />
+                <AgentThread messages={messages} isLoading={isLoading} prompt={submittedPrompt} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -401,6 +493,15 @@ export default function Home() {
           </form>
         </div>
       </div>
+
+      {/* ─── History sidebar (per-mode) ───────────────────────────────────────── */}
+      <HistorySidebar
+        open={historyOpen}
+        mode={mode}
+        onClose={() => setHistoryOpen(false)}
+        onSelect={handleSelectHistory}
+        refreshKey={historyRefresh}
+      />
     </div>
   );
 }
