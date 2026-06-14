@@ -19,6 +19,7 @@ import uuid
 import structlog
 
 from .bus import AgentMessage, TaskContext, bus
+from .concurrency import identity_slot
 from .guardrails import GuardrailBlocked, guardrail_engine
 from .knowledge_engine import knowledge_engine
 from .memory_service import memory_service
@@ -64,6 +65,23 @@ async def run_adversarial_task(
     session_id: str | None = None,
     router: "ModelRouter | None" = None,
 ) -> dict:
+    """Public entry — wraps the run in a per-identity concurrency slot (F-035)."""
+    async with identity_slot(user_id):
+        return await _run_adversarial_task(
+            input_text, domain, max_rounds,
+            user_id=user_id, session_id=session_id, router=router,
+        )
+
+
+async def _run_adversarial_task(
+    input_text: str,
+    domain: str,
+    max_rounds: int | None = None,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    router: "ModelRouter | None" = None,
+) -> dict:
     """
     Execute an adversarial multi-LLM collaboration.
 
@@ -83,22 +101,33 @@ async def run_adversarial_task(
     if pre.verdict == "block":
         raise GuardrailBlocked(pre, "pre_check")
 
-    # Retrieve context: per-user semantic memory (multi-user) or global file engine (legacy).
-    if multiuser:
-        assert user_id is not None
-        context_block = await memory_service.grouped_context(user_id, input_text)
-    else:
-        past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
-        context_block = ""
-        if past_context:
-            lines = []
-            for i, run_info in enumerate(past_context, 1):
-                lines.append(
-                    f"[Prior Run {i} — {run_info['domain']}, model: {run_info['model']}, "
-                    f"relevance: {run_info['score']:.2f}]"
-                )
-                lines.append(run_info["output"][:300])
-            context_block = "\n\n".join(lines)
+    # Retrieve context: Phase 18 Agentic RAG (CRAG-lite) over FAISS corpus + memory.
+    # Falls back to pgvector grouped memory (multi-user) or past-run knowledge (legacy).
+    context_block = ""
+    if settings.agentic_rag_enabled:
+        try:
+            from ..rag.agentic import agentic_retrieve
+            context_block = await agentic_retrieve(
+                input_text, router, identity_id=user_id, user_id=user_id
+            )
+        except Exception:  # noqa: BLE001
+            context_block = ""
+
+    if not context_block:
+        if multiuser:
+            assert user_id is not None
+            context_block = await memory_service.grouped_context(user_id, input_text)
+        else:
+            past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
+            if past_context:
+                lines = []
+                for i, run_info in enumerate(past_context, 1):
+                    lines.append(
+                        f"[Prior Run {i} — {run_info['domain']}, model: {run_info['model']}, "
+                        f"relevance: {run_info['score']:.2f}]"
+                    )
+                    lines.append(run_info["output"][:300])
+                context_block = "\n\n".join(lines)
 
     # Generate ELM declarations (or static fallback)
     declarations = _get_declarations(input_text, domain)
@@ -273,6 +302,42 @@ async def run_adversarial_task(
     }
 
 
+def _balanced_json_objects(text: str) -> list[str]:
+    """Return every top-level balanced {...} substring, in document order.
+
+    Brace-depth scan that respects strings + escapes, so braces inside string
+    values don't throw off nesting. Used to find the Judge's trailing verdict
+    object even when earlier (e.g. Actor-embedded) JSON appears first (F-019).
+    """
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    objects.append(text[start : i + 1])
+                    start = -1
+    return objects
+
+
 def _parse_judge_output(content: str) -> dict:
     """Extract and parse JSON from Judge output. Handles markdown fences."""
     # Strip common markdown fences
@@ -281,13 +346,20 @@ def _parse_judge_output(content: str) -> dict:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    # Fallback: find first JSON object anywhere in the string
-    match = re.search(r"\{[\s\S]*\}", cleaned)
-    if match:
+    # F-019: the Judge's verdict is its FINAL output. A greedy first-match `{...}` can
+    # latch onto JSON the Actor embedded earlier in the transcript. Scan ALL balanced
+    # objects and prefer the LAST parseable one that actually carries a "verdict" key.
+    candidates = _balanced_json_objects(cleaned)
+    chosen: dict | None = None
+    for cand in candidates:
         try:
-            return json.loads(match.group())
+            obj = json.loads(cand)
         except json.JSONDecodeError:
-            pass
+            continue
+        if isinstance(obj, dict) and "verdict" in obj:
+            chosen = obj  # keep last verdict-bearing object
+    if chosen is not None:
+        return chosen
 
     # P14: field-level salvage — the judge JSON is frequently TRUNCATED mid-string
     # (long final_answer hits the token cap), which nukes a perfectly good verdict.

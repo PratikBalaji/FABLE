@@ -1007,3 +1007,60 @@ FEASIBLE — defer until golden cache (Phase 15) and seed corpus (Phase 16) demo
 | Dependencies | None new |
 | Cost | ~$0.01-0.05 per 10-K page |
 | Risk | Low — parallel to existing RAG |
+
+---
+
+## Phase 18 — Agentic RAG (Corrective RAG / CRAG-lite) — 2026-06-14
+
+### Context
+
+Audit of the retrieval path found the FAISS corpus was **dead**: `vector_store` (uploaded
+docs, S3, seed corpus) was ingested but **never queried** during `/run` or
+`/adversarial-run` — agents only saw past-run embeddings (`knowledge_engine`) or pgvector
+memory. Two breakages compounded it: `scripts/seed_rag.py` imported a non-existent
+`backend.rag.ingestion.ingest_text`, and `VectorStore` never persisted to disk (seeded
+data died with the process). This phase makes the corpus live via agentic retrieval.
+
+### Design — CRAG-lite
+
+```
+query → retrieve (FAISS corpus + pgvector memory) → LLM grades each candidate
+      → if < min_relevant and hops remain: LLM rewrites query → re-retrieve → re-grade
+      → format graded context → inject as metadata["retrieved_context"]
+```
+- Bounded at `AGENTIC_RAG_MAX_HOPS` (default 2). Grader + rewriter use the cheap
+  `secondary_model`. Every step is best-effort (failure → "" → run proceeds).
+- Sources: FAISS corpus (always) + semantic memory (multi-user only). The injected block
+  keeps the existing key so F-025 UNTRUSTED framing still applies downstream.
+
+### Files
+
+| File | Change |
+|------|--------|
+| `backend/rag/agentic.py` | New — `agentic_retrieve()` (retrieve/grade/rewrite loop), `_retrieve_all`, `_grade`, `_rewrite` |
+| `backend/rag/pipeline.py` | VectorStore now persists (`_save`/`_load`: faiss index + chunks/meta JSON) — fixes data loss across processes |
+| `scripts/seed_rag.py` | Fixed broken import → `vector_store.ingest`; UTF-8 console for Windows |
+| `backend/core/config.py` | `agentic_rag_enabled/max_hops/top_k/min_relevant` |
+| `backend/core/lifecycle.py` | Step 1 prefers `agentic_retrieve`, falls back to knowledge_engine; golden warm-start preserved |
+| `backend/core/adversarial_lifecycle.py` | Same; falls back to grouped memory / knowledge_engine |
+| `tests/unit/test_agentic_rag.py` | New — persistence round-trip, grading, rewrite-on-weak, hop cap, non-fatal, disabled |
+
+### Verification
+
+- `pytest tests/unit` — 30 green (7 new agentic + 23 prior). Persistence round-trip proven
+  (ingest → new VectorStore instance loads same chunks).
+- `scripts/seed_rag.py --domain code_review --dry-run` fetches all 5 sources (PEP 8/20/257,
+  CWE Top-25, OWASP Top-10). Live ingest requires `OPENAI_API_KEY` (embeddings).
+- Toggle `AGENTIC_RAG_ENABLED=false` → clean fallback to prior behaviour.
+
+### Research framing
+
+Corrective-RAG with relevance grading + query reformulation in a multi-agent adversarial
+system. Publishable angle: graded retrieval reduces context pollution vs single-shot top-k,
+measurable via the existing rubric scores.
+
+### Open follow-ups
+
+1. Re-ranking (MMR / reciprocal-rank-fusion) across the two sources before grading.
+2. Web-search fallback when local corpus grades empty (needs provider + SSRF-safe fetch — F-027 guard already exists).
+3. Self-RAG reflection tokens + multi-hop > 2 once quality ROI is measured.

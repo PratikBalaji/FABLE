@@ -71,6 +71,7 @@ interface WarRoomProps {
   finalAnswer: string;
   adversarialMeta: AdversarialMeta | null;
   pipeline: string[];
+  prompt?: string;
 }
 
 // ─── WarRoom ─────────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ export default function WarRoom({
   finalAnswer,
   adversarialMeta,
   pipeline,
+  prompt,
 }: WarRoomProps) {
   const { revealed, activeRole } = useSequentialReveal(messages, isLoading);
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
@@ -112,6 +114,16 @@ export default function WarRoom({
 
   return (
     <div className="h-full flex flex-col gap-3 p-4 overflow-hidden relative">
+      {/* User prompt — slim strip at top */}
+      {prompt && (
+        <div
+          className="flex-none mx-auto max-w-2xl w-full px-4 py-2 rounded-2xl"
+          style={{ background: "rgba(203,166,247,0.07)", boxShadow: "0 0 0 1px rgba(203,166,247,0.18)" }}
+        >
+          <span className="text-[10px] font-sans font-semibold" style={{ color: "#cba6f7" }}>You</span>
+          <p className="text-[11px] font-sans leading-relaxed line-clamp-2" style={{ color: "#cdd6f4" }}>{prompt}</p>
+        </div>
+      )}
       {/* Scoreboard — top-center */}
       <div className="flex-none flex justify-center">
         <Scoreboard
