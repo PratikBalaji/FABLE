@@ -30,7 +30,6 @@ License provenance (all verified public-domain / CC0 / permissive):
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 from dataclasses import dataclass
@@ -166,7 +165,7 @@ def _strip_wiki_markup(text: str) -> str:
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", text)  # [[link|text]] → text
     text = re.sub(r"==+([^=]+)==+", r"\1", text)                    # headings
     text = re.sub(r"'''?([^']+)'''?", r"\1", text)                  # bold/italic
-    text = re.sub(r"\{\{[^}]+\}\}", "", text)                       # templates
+    text = re.sub(r"\{\{.*?\}\}", "", text, flags=re.DOTALL)        # templates (may span lines)
     text = re.sub(r"<[^>]+>", " ", text)                            # HTML tags
     text = re.sub(r"\[\[File:[^\]]+\]\]", "", text)                 # file links
     text = re.sub(r"\[\[Category:[^\]]+\]\]", "", text)             # categories
@@ -174,10 +173,52 @@ def _strip_wiki_markup(text: str) -> str:
     return re.sub(r"\s{2,}", " ", text).strip()
 
 
+# Recurring page-chrome phrases to drop (theme togglers, skip-nav, cookie notices).
+_CHROME_PHRASES = (
+    "colour scheme", "color scheme", "skip to content", "skip to main",
+    "following system", "toggle navigation", "cookie", "javascript is disabled",
+)
+
+_HTML_ENTITIES = {
+    "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'",
+    "&apos;": "'", "&nbsp;": " ", "&mdash;": "—", "&ndash;": "–", "&hellip;": "…",
+}
+
+
 def _strip_html(html: str) -> str:
+    """Extract readable text from an HTML page: drop script/style/nav/header/footer
+    blocks (page chrome + boilerplate), strip remaining tags, decode entities, and
+    collapse whitespace. Removes the nav/theme boilerplate that polluted seed chunks."""
+    # 1. Remove whole non-content blocks (with their inner text)
+    html = re.sub(
+        r"(?is)<(script|style|head|nav|header|footer|noscript|svg|form|aside)\b[^>]*>.*?</\1>",
+        " ",
+        html,
+    )
+    # 2. Treat block-level closers as line breaks so structure survives
+    html = re.sub(r"(?i)</(p|div|li|h[1-6]|tr|br|section|article)\s*>", "\n", html)
+    # 3. Strip all remaining tags
     text = re.sub(r"<[^>]+>", " ", html)
+    # 4. Decode common entities (named + numeric)
+    for ent, ch in _HTML_ENTITIES.items():
+        text = text.replace(ent, ch)
+    text = re.sub(r"&#\d+;", " ", text)
     text = re.sub(r"&[a-zA-Z]+;", " ", text)
-    return re.sub(r"\s{2,}", " ", text).strip()
+    # 5. Normalize whitespace per line, drop empty/very-short + known-chrome lines, dedupe
+    seen: set[str] = set()
+    lines: list[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r"[ \t]{2,}", " ", raw).strip()
+        if len(line) < 3:           # skip nav glyphs / single words of chrome
+            continue
+        low = line.lower()
+        if any(p in low for p in _CHROME_PHRASES):  # theme togglers, skip links, etc.
+            continue
+        if line in seen:            # drop repeated boilerplate lines
+            continue
+        seen.add(line)
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def _content_hash(text: str) -> str:

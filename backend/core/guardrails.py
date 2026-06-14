@@ -213,6 +213,26 @@ class GuardrailEngine:
         self._cache: dict[str, GuardResult] = {}
 
     async def _classify(self, text: str, router) -> GuardResult:
+        """F-023: classify the WHOLE input, not just the first 4000 chars (injection
+        could hide after the cutoff). Split into ≤4000-char windows (cap 5), classify
+        each, and return the most severe verdict (block > warn > allow)."""
+        _WINDOW = 4000
+        _MAX_CHUNKS = 5
+        if len(text) <= _WINDOW:
+            return await self._classify_chunk(text, router)
+
+        chunks = [text[i : i + _WINDOW] for i in range(0, len(text), _WINDOW)][:_MAX_CHUNKS]
+        severity = {"allow": 0, "warn": 1, "block": 2}
+        worst = GuardResult("allow", layer="classifier")
+        for chunk in chunks:
+            res = await self._classify_chunk(chunk, router)
+            if severity[res.verdict] > severity[worst.verdict]:
+                worst = res
+                if res.verdict == "block":
+                    break  # can't get worse
+        return worst
+
+    async def _classify_chunk(self, text: str, router) -> GuardResult:
         h = _hash(text)
         if h in self._cache:
             return self._cache[h]

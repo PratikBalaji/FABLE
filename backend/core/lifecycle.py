@@ -8,6 +8,8 @@ import uuid
 from typing import AsyncGenerator
 
 from .bus import AgentMessage, TaskContext, bus
+from .config import settings
+from .concurrency import ConcurrencyLimitExceeded, identity_slot
 from .embeddings import embed_text
 from .golden_cache import get_golden_cache
 from .guardrails import GuardrailBlocked, guardrail_engine
@@ -80,6 +82,30 @@ async def _run_core(
 
     task_id = str(uuid.uuid4())
 
+    # F-035: per-identity concurrency guard
+    try:
+        async with identity_slot(user_id):
+            async for event in _run_core_inner(
+                input_text, domain, pipeline, task_id, user_id=user_id, router=_router
+            ):
+                yield event
+    except ConcurrencyLimitExceeded as exc:
+        yield {"type": "error", "exc": exc, "data": {"detail": str(exc)}}
+    return
+
+
+async def _run_core_inner(
+    input_text: str,
+    domain: str,
+    pipeline: list[str],
+    task_id: str,
+    *,
+    user_id: str | None,
+    router: ModelRouter | None,
+):
+    """Inner generator (concurrency slot already held)."""
+    _router = router or default_router
+
     # Step -1: Golden-case cache check (before guardrail — fast, no LLM calls on miss)
     golden_cache = get_golden_cache()
     try:
@@ -144,19 +170,31 @@ async def _run_core(
         return
 
     # Step 1: Retrieve relevant context (+ inject golden warm-start seed if available)
-    past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
-    context_block = ""
-    if _golden_warm_ctx:
-        context_block = _golden_warm_ctx + "\n\n"
-    if past_context:
-        lines = []
-        for i, run_info in enumerate(past_context, 1):
-            lines.append(
-                f"[Prior Run {i} — {run_info['domain']}, model: {run_info['model']}, "
-                f"relevance: {run_info['score']:.2f}]"
+    # Phase 18: Agentic RAG (CRAG-lite) over the FAISS corpus + memory; falls back to
+    # past-run knowledge when disabled or empty.
+    rag_block = ""
+    if settings.agentic_rag_enabled:
+        try:
+            from ..rag.agentic import agentic_retrieve
+            rag_block = await agentic_retrieve(
+                input_text, _router, identity_id=user_id, user_id=user_id
             )
-            lines.append(run_info["output"][:300])
-        context_block = "\n\n".join(lines)
+        except Exception:  # noqa: BLE001
+            rag_block = ""
+    if not rag_block:
+        past_context = knowledge_engine.get_relevant_context(input_text, top_k=3)
+        if past_context:
+            lines = []
+            for i, run_info in enumerate(past_context, 1):
+                lines.append(
+                    f"[Prior Run {i} — {run_info['domain']}, model: {run_info['model']}, "
+                    f"relevance: {run_info['score']:.2f}]"
+                )
+                lines.append(run_info["output"][:300])
+            rag_block = "\n\n".join(lines)
+
+    parts = [p for p in (_golden_warm_ctx, rag_block) if p]
+    context_block = "\n\n".join(parts)
 
     # Step 2: Learned model routing
     best_model = knowledge_engine.get_best_model_for(input_text)
