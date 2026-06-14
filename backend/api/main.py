@@ -11,7 +11,7 @@ from ..agents.register import register_all
 from ..agents.adversarial_register import register_adversarial
 from ..core.config import settings
 from .limiter import limiter
-from .routes import run, feedback, ingest, graph, identity
+from .routes import run, feedback, ingest, graph, identity, providers, sessions, auth_openrouter, experiment
 
 log = structlog.get_logger()
 
@@ -50,6 +50,10 @@ app.include_router(feedback.router, tags=["Feedback"])
 app.include_router(ingest.router, tags=["RAG"])
 app.include_router(graph.router, tags=["Knowledge Graph"])
 app.include_router(identity.router, tags=["Identity"])
+app.include_router(providers.router, tags=["BYOK Providers"])
+app.include_router(sessions.router, tags=["Sessions"])
+app.include_router(auth_openrouter.router, tags=["OAuth"])
+app.include_router(experiment.router, tags=["Experiment"])
 
 
 @app.get("/health")

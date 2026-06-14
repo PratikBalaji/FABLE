@@ -31,10 +31,15 @@ AVAILABLE_MODELS = {
 
 
 class ModelRouter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        # BYOK (F-015): per-user credential override; falls back to server global key.
         self._client = openai.AsyncOpenAI(
-            api_key=settings.openrouter_api_key,
-            base_url=settings.openrouter_base_url,
+            api_key=api_key or settings.openrouter_api_key,
+            base_url=base_url or settings.openrouter_base_url,
             timeout=45.0,   # P14: fail a hung upstream call fast → fallback chain handles it
             default_headers={
                 "HTTP-Referer": settings.app_url,

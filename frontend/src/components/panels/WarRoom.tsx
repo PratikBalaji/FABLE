@@ -64,7 +64,7 @@ function useSequentialReveal(messages: AgentMessage[], isLoading: boolean) {
 interface WarRoomProps {
   messages: AgentMessage[];
   isLoading: boolean;
-  mode: "standard" | "adversarial";
+  mode: "standard" | "adversarial" | "experiment";
   scores: Record<string, number>;
   verdict: VerdictMeta | null;
   runSummary: string;

@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Research overlay — 4-pod split for role-isolation benchmarking (Phase 12).
+# Use this to run ablation studies: each role runs in isolation so CPU/memory
+# and latency metrics are per-role, not shared within a pod group.
+#
+# Deploy: kubectl apply -k infra/k8s/overlays/research
+# Difference from overlays/local: splits execution-pod into actor-pod + refiner-pod.
+
+namespace: fable
+
+resources:
+  - ../../base
+  # Extra pod: refiner isolated from actor for independent HPA + latency tracking
+  - refiner-pod/deployment.yaml
+  - refiner-pod/service.yaml
+
+patches:
+  # Coordinator: inject RESEARCH_MODE and updated 4-pod service registry
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: '{"planning":"http://planning-pod:8001","execution":"http://execution-pod:8002","review":"http://review-pod:8003","refinement":"http://refiner-pod:8004"}'
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: RESEARCH_MODE
+          value: "true"
+    target:
+      kind: Deployment
+      name: coordinator
+
+  # execution-pod: actor only (refiner moves to its own pod)
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: POD_ROLES
+          value: "adv:actor"
+    target:
+      kind: Deployment
+      name: execution-pod

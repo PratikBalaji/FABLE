@@ -8,7 +8,9 @@ import { ScorePills } from "@/components/ui/ScorePills";
 import { Composer } from "@/components/composer/Composer";
 import {
   runTask,
+  runTaskStream,
   runAdversarialTask,
+  runExperiment,
   getGraph,
   ingestFile,
   type AgentMessage,
@@ -17,24 +19,29 @@ import {
   type GraphState,
   type AdversarialMeta,
   type VerdictMeta,
+  type RecycledMeta,
+  type MonteCarloResponse,
 } from "@/lib/api";
+import ExperimentView from "@/components/panels/ExperimentView";
 
 const PlanetaryGraph = dynamic(
   () => import("@/components/graph/PlanetaryGraph"),
   { ssr: false }
 );
 
-type Mode = "standard" | "adversarial";
-type View = "graph" | "warroom" | "thread";
+type Mode = "standard" | "adversarial" | "experiment";
+type View = "graph" | "warroom" | "thread" | "experiment";
 
 const MODE_OPTIONS  = [
   { value: "standard"    as Mode, label: "Standard" },
   { value: "adversarial" as Mode, label: "Adversarial" },
+  { value: "experiment"  as Mode, label: "Experiment" },
 ];
 const VIEW_OPTIONS  = [
-  { value: "graph"   as View, label: "Universe" },
-  { value: "warroom" as View, label: "War Room" },
-  { value: "thread"  as View, label: "Thread" },
+  { value: "graph"      as View, label: "Universe" },
+  { value: "warroom"    as View, label: "War Room" },
+  { value: "thread"     as View, label: "Thread" },
+  { value: "experiment" as View, label: "Experiment" },
 ];
 
 // ─── Judge verdict chip ───────────────────────────────────────────────────────
@@ -80,6 +87,8 @@ export default function Home() {
   const [activeView,     setActiveView]     = useState<View>("graph");
   const [uploadedFiles,  setUploadedFiles]  = useState<File[]>([]);
   const [uploadStatus,   setUploadStatus]   = useState<string | null>(null);
+  const [experimentResult, setExperimentResult] = useState<MonteCarloResponse | null>(null);
+  const [recycledMeta,     setRecycledMeta]     = useState<RecycledMeta | null>(null);
 
   useEffect(() => {
     getGraph().then(setGraphState).catch(() => {});
@@ -118,9 +127,14 @@ export default function Home() {
       setRunSummary("");
       setFinalAnswer("");
       setVerdict(null);
+      setRecycledMeta(null);
 
       try {
-        if (mode === "adversarial") {
+        if (mode === "experiment") {
+          const result = await runExperiment({ input, n_variants: 4 });
+          setExperimentResult(result);
+          setActiveView("experiment");
+        } else if (mode === "adversarial") {
           const result: AdversarialRunResponse = await runAdversarialTask({ input });
           setMessages(result.messages);
           setTaskId(result.task_id);
@@ -131,18 +145,28 @@ export default function Home() {
           setRunSummary(result.run_summary ?? "");
           setFinalAnswer(result.final_answer ?? "");
           setVerdict(result.verdict ?? null);
+          if (activeView === "graph") setActiveView("warroom");
         } else {
-          const result: RunResponse = await runTask({ input });
-          setMessages(result.messages);
-          setTaskId(result.task_id);
-          setScores(result.scores);
-          setModelUsed(result.model_used);
-          setGraphState(result.knowledge_graph);
-          setRunSummary(result.run_summary ?? "");
-          setFinalAnswer(result.final_answer ?? "");
-          setVerdict(result.verdict ?? null);
+          // SSE streaming — messages appear as each agent completes
+          for await (const event of runTaskStream({ input })) {
+            if (event.type === "agent_message") {
+              const { type: _t, ...msg } = event;
+              setMessages((prev) => [...prev, msg as AgentMessage]);
+              if (activeView === "graph") setActiveView("warroom");
+            } else if (event.type === "complete") {
+              setTaskId(event.task_id);
+              setScores(event.scores);
+              setModelUsed(event.model_used);
+              setGraphState(event.knowledge_graph);
+              setRunSummary(event.run_summary ?? "");
+              setFinalAnswer(event.final_answer ?? "");
+              setVerdict(event.verdict ?? null);
+              if ((event as any).recycled_meta?.recycled) setRecycledMeta((event as any).recycled_meta);
+            } else if (event.type === "error") {
+              throw new Error(event.detail);
+            }
+          }
         }
-        if (activeView === "graph") setActiveView("warroom");
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : "Request failed");
       } finally {
@@ -206,6 +230,24 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <AnimatePresence>
             {adversarialMeta && <JudgeChip key="judge" meta={adversarialMeta} />}
+            {recycledMeta?.recycled && (
+              <motion.span
+                key="recycled"
+                initial={{ opacity: 0, y: -4, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                className="text-[10px] font-mono px-2.5 py-1 rounded-full font-medium"
+                style={{
+                  background: "rgba(249,226,175,0.10)",
+                  color: "#f9e2af",
+                  boxShadow: "0 0 0 1px rgba(249,226,175,0.25), 0 0 10px rgba(249,226,175,0.12)",
+                }}
+                title={`Golden case ${recycledMeta.golden_run_id.slice(0, 8)}`}
+              >
+                ♻ {Math.round(recycledMeta.similarity * 100)}% match
+              </motion.span>
+            )}
           </AnimatePresence>
           {isLoading && (
             <motion.span
@@ -309,6 +351,18 @@ export default function Home() {
                 className="h-full px-6 py-4 max-w-3xl mx-auto"
               >
                 <AgentThread messages={messages} isLoading={isLoading} />
+              </motion.div>
+            )}
+            {activeView === "experiment" && (
+              <motion.div
+                key="experiment"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.22 }}
+                className="h-full max-w-5xl mx-auto"
+              >
+                <ExperimentView result={experimentResult} isLoading={isLoading} />
               </motion.div>
             )}
           </AnimatePresence>

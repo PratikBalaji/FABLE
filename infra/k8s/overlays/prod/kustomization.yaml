@@ -1,0 +1,112 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production overlay — targets AWS EKS (AWS Load Balancer Controller required)
+# Deploy: kubectl apply -k infra/k8s/overlays/prod
+#
+# Prerequisites:
+#   1. EKS cluster with AWS Load Balancer Controller installed
+#      (handled by FableEksStack CDK — see infra/aws/eks_stack.py)
+#   2. ECR images pushed and image tags set below (IMAGE_TAG env or kustomize edit)
+#   3. Secrets populated: kubectl create secret generic api-keys -n fable --from-env-file=.env
+
+namespace: fable
+
+resources:
+  - ../../base
+
+# Override images for production (replace :local with real ECR tags)
+images:
+  - name: fable-coordinator:local
+    newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/fable-coordinator
+    newTag: ${IMAGE_TAG}
+  - name: fable-agent-group:local
+    newName: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/fable-agent-group
+    newTag: ${IMAGE_TAG}
+
+patches:
+  # Scale up coordinator for production
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: coordinator
+
+  # Scale agent pods
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: planning-pod
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: execution-pod
+
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: review-pod
+
+  # Use AWS ALB Ingress Controller in prod (ingressClassName: alb)
+  - patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: alb
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1scheme
+        value: internet-facing
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1target-type
+        value: ip
+    target:
+      kind: Ingress
+      name: fable-ingress
+
+  # Increase Presidio memory for production (en_core_web_lg needs ~1.5GB)
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1500Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "3Gi"
+    target:
+      kind: Deployment
+      name: presidio-analyzer
+
+  # HPA max replicas for production
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+    target:
+      kind: HorizontalPodAutoscaler
+      name: hpa-planning
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+    target:
+      kind: HorizontalPodAutoscaler
+      name: hpa-execution
+
+  - patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+    target:
+      kind: HorizontalPodAutoscaler
+      name: hpa-review

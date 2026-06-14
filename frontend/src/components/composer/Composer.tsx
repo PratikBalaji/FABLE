@@ -47,7 +47,7 @@ export interface ComposerProps {
   onChange: (v: string) => void;
   onSubmit: (e: React.FormEvent) => void;
   isLoading: boolean;
-  mode: "standard" | "adversarial";
+  mode: "standard" | "adversarial" | "experiment";
   uploadedFiles: File[];
   uploadStatus: string | null;
   onFilesChange: (files: FileList | null) => void;

@@ -74,10 +74,19 @@ class AgentBus:
     ) -> list[AgentMessage]:
         """Run a sequential pipeline of agent roles."""
         results: list[AgentMessage] = []
-        for role in pipeline:
-            msg = await self.dispatch(role, ctx)
+        async for msg in self.stream_collaboration(ctx, pipeline):
             results.append(msg)
         return results
+
+    async def stream_collaboration(
+        self,
+        ctx: TaskContext,
+        pipeline: list[str],
+    ):
+        """Yield AgentMessages one by one as each agent completes (SSE streaming)."""
+        for role in pipeline:
+            msg = await self.dispatch(role, ctx)
+            yield msg
 
 
 def _create_bus() -> AgentBus:

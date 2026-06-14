@@ -1,6 +1,19 @@
 version: "3.9"
 
 services:
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - DEFAULT_PORT=3000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ../..
@@ -9,9 +22,15 @@ services:
       - "8000:8000"
     env_file:
       - ../../.env
+    environment:
+      # Phase 10: Presidio sidecar — NER-grade PII detection (PERSON/LOC/ORG)
+      - PRESIDIO_URL=http://presidio-analyzer:3000
     volumes:
       - ../../data:/app/data
     restart: unless-stopped
+    depends_on:
+      presidio-analyzer:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

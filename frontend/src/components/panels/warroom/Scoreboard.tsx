@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { AdversarialMeta } from "@/lib/api";
 
 interface ScoreboardProps {
-  mode: "standard" | "adversarial";
+  mode: "standard" | "adversarial" | "experiment";
   isLoading: boolean;
   revealedCount: number;
   pipelineLength: number;

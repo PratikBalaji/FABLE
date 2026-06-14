@@ -81,6 +81,12 @@ export interface GraphState {
   stats: GraphStats;
 }
 
+export interface RecycledMeta {
+  recycled: boolean;
+  golden_run_id: string;
+  similarity: number;
+}
+
 export interface RunResponse {
   task_id: string;
   domain: string;
@@ -92,6 +98,7 @@ export interface RunResponse {
   run_summary: string;
   final_answer: string;
   verdict: VerdictMeta;
+  recycled_meta: RecycledMeta;
 }
 
 export interface AdversarialMeta {
@@ -118,6 +125,61 @@ export async function runTask(params: {
   return data;
 }
 
+export type StreamEvent =
+  | ({ type: "agent_message" } & AgentMessage)
+  | ({ type: "complete" } & Omit<RunResponse, "messages">)
+  | { type: "error"; detail: string };
+
+/**
+ * SSE streaming variant of runTask. Yields events as each agent completes.
+ * Uses fetch + ReadableStream because EventSource only supports GET.
+ */
+export async function* runTaskStream(params: {
+  input: string;
+  domain?: string;
+  pipeline?: string[];
+  session_id?: string;
+}): AsyncGenerator<StreamEvent> {
+  const url = (process.env.NEXT_PUBLIC_API_URL ? "/api" : "http://localhost:8000") + "/run/stream";
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-FABLE-Request": "1",
+    },
+    credentials: "include",
+    body: JSON.stringify(params),
+  });
+
+  if (!resp.ok || !resp.body) {
+    throw new Error(`Stream request failed: ${resp.status}`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const raw = line.slice(6).trim();
+        if (raw && raw !== "[DONE]") {
+          try {
+            yield JSON.parse(raw) as StreamEvent;
+          } catch {
+            // malformed SSE line — skip
+          }
+        }
+      }
+    }
+  }
+}
+
 export async function runAdversarialTask(params: {
   input: string;
   domain?: string;
@@ -134,6 +196,32 @@ export async function getGraph(): Promise<GraphState> {
 
 export async function ingestText(text: string, source = "manual"): Promise<{ chunks_added: number }> {
   const { data } = await api.post("/ingest", { text, source });
+  return data;
+}
+
+// ── Phase 13: Monte Carlo Experiment ─────────────────────────────────────────
+
+export interface MonteCarloResponse {
+  prompt: string;
+  variants: string[];
+  models: string[];
+  responses: string[][];          // [variant_idx][model_idx]
+  similarity_matrix: number[][];
+  consensus_score: number;
+  divergence_pairs: Array<{
+    idx_a: number; idx_b: number; similarity: number;
+    variant_a: string; model_a: string;
+    variant_b: string; model_b: string;
+  }>;
+  per_model_consensus: Record<string, number>;
+}
+
+export async function runExperiment(params: {
+  input: string;
+  n_variants?: number;
+  models?: string[];
+}): Promise<MonteCarloResponse> {
+  const { data } = await api.post<MonteCarloResponse>("/experiment/run", params);
   return data;
 }
 

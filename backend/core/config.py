@@ -70,6 +70,16 @@ class Settings(BaseSettings):
         default="openai/gpt-4o-mini",
         alias="GUARDRAILS_CLASSIFIER_MODEL",
     )
+    # Content moderation (hate speech always blocked; profanity gate is optional)
+    moderation_enabled: bool = Field(default=True, alias="MODERATION_ENABLED")
+    moderation_block_profanity: bool = Field(default=False, alias="MODERATION_BLOCK_PROFANITY")
+
+    # Golden-case reasoning cache (Phase 14)
+    golden_cache_enabled: bool = Field(default=True, alias="GOLDEN_CACHE_ENABLED")
+    golden_promote_threshold: float = Field(default=0.75, alias="GOLDEN_PROMOTE_THRESHOLD")
+    golden_hit_threshold: float = Field(default=0.93, alias="GOLDEN_HIT_THRESHOLD")
+    golden_warm_threshold: float = Field(default=0.82, alias="GOLDEN_WARM_THRESHOLD")
+    golden_ttl_days: int = Field(default=30, alias="GOLDEN_TTL_DAYS")
 
     # --- P4a: Identity + PII ----------------------------------------------
     # Supabase project ref (e.g. cldgflwqgyfmanbvuxrg)
@@ -98,6 +108,8 @@ class Settings(BaseSettings):
     pii_llm_fallback: bool = Field(default=True, alias="PII_LLM_FALLBACK")
     pii_classifier_model: str = Field(default="openai/gpt-4o-mini", alias="PII_CLASSIFIER_MODEL")
     pii_confidence_threshold: float = Field(default=0.40, alias="PII_CONFIDENCE_THRESHOLD")
+    # Presidio sidecar (Phase 10) — set PRESIDIO_URL to enable; blank = regex+LLM fallback
+    presidio_url: str = Field(default="", alias="PRESIDIO_URL")
 
     # Memory abstraction — never store raw text in memory_chunks
     memory_abstraction_enabled: bool = Field(default=True, alias="MEMORY_ABSTRACTION_ENABLED")
