@@ -13,3 +13,10 @@ venv/
 # F-037: prevent notebook exports (which may contain user data) from being committed
 notebooks/fable_*.ipynb
 
+# Untracked development artifacts (recheck 2026-06-15)
+video-app/
+input.txt
+test_models.py
+frontend/tsconfig.tsbuildinfo
+infra/aws/cdk.out/
+

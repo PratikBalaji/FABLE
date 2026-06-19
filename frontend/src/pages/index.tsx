@@ -100,6 +100,13 @@ export default function Home() {
     getGraph().then(setGraphState).catch(() => {});
   }, []);
 
+  // Re-fetch graph whenever user switches to the graph view
+  useEffect(() => {
+    if (activeView === "graph") {
+      getGraph().then(setGraphState).catch(() => {});
+    }
+  }, [activeView]);
+
   // ─── File handling ─────────────────────────────────────────────────────────
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -292,6 +299,12 @@ export default function Home() {
           >
             FABLE
           </span>
+          <span
+            className="hidden sm:block text-[10px] tracking-wide"
+            style={{ color: "#6c6c8a", lineHeight: 1.2, maxWidth: 220 }}
+          >
+            Framework for Adversarial Benchmarking &amp; Logic Evaluation
+          </span>
         </div>
 
         {/* Mode switcher — centre */}
@@ -305,8 +318,12 @@ export default function Home() {
               setAdversarialMeta(null);
               setExperimentResult(null);
               setSubmittedPrompt("");
-              if (m !== "experiment" && activeView !== "warroom" && activeView !== "thread") {
-                setActiveView("warroom");
+              // When switching away from experiment, restore graph view (not warroom);
+              // only force-switch if the current view would be hidden (experiment has no sub-views).
+              if (m === "experiment") {
+                // no view switcher shown in experiment mode — keep activeView state for when we leave
+              } else if (activeView === "graph" || m !== "experiment") {
+                // stay on whatever view the user was on
               }
             }}
             size="sm"
@@ -315,6 +332,14 @@ export default function Home() {
 
         {/* Right meta chips */}
         <div className="flex items-center gap-2">
+          <a
+            href="/dashboard"
+            className="text-[10px] font-mono px-2.5 py-1 rounded-full transition-colors"
+            style={{ color: "#6c6c8a", border: "1px solid rgba(108,108,138,0.25)" }}
+            title="Benchmark Dashboard"
+          >
+            📊 Dashboard
+          </a>
           <AnimatePresence>
             {adversarialMeta && <JudgeChip key="judge" meta={adversarialMeta} />}
             {recycledMeta?.recycled && (
