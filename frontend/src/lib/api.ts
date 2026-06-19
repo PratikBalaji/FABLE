@@ -225,6 +225,65 @@ export async function runExperiment(params: {
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard / Benchmark / Export APIs (Phase 15)
+// ---------------------------------------------------------------------------
+
+export interface BenchmarkSummary {
+  total: number;
+  done: number;
+  pending: number;
+  modes: {
+    standard: { mean_score: number; mean_latency: number; pass_rate: number };
+    adversarial: { mean_score: number; mean_latency: number; pass_rate: number };
+    montecarlo: { mean_consensus: number };
+  };
+  cost: {
+    total_usd: number;
+    per_mode: Record<string, number>;
+  };
+}
+
+export async function getBenchmarkSummary(): Promise<BenchmarkSummary> {
+  const { data } = await api.get<BenchmarkSummary>("/benchmark/summary");
+  return data;
+}
+
+export interface TraceSpan {
+  trace_id: string;
+  span_id: string;
+  name: string;
+  start_time: number;
+  end_time: number;
+  duration_ms: number;
+  status: string;
+  attributes: Record<string, unknown>;
+}
+
+export async function getRecentTraces(limit = 50): Promise<TraceSpan[]> {
+  const { data } = await api.get<TraceSpan[]>(`/traces?limit=${limit}`);
+  return data;
+}
+
+export interface KaggleExportRequest {
+  username: string;
+  key: string;
+  dataset_slug?: string;
+}
+
+export interface KaggleExportResponse {
+  dataset_url: string;
+  kernel_url: string;
+}
+
+export async function exportToKaggle(creds: KaggleExportRequest): Promise<KaggleExportResponse> {
+  const { data } = await api.post<KaggleExportResponse>("/export/kaggle", {
+    credentials: { username: creds.username, key: creds.key },
+    dataset_slug: creds.dataset_slug ?? "fable-benchmark-v1",
+  });
+  return data;
+}
+
 export async function ingestFile(file: File, source?: string): Promise<{ chunks_added: number; source: string }> {
   const form = new FormData();
   form.append("file", file);

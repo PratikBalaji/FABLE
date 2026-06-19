@@ -1064,3 +1064,80 @@ measurable via the existing rubric scores.
 1. Re-ranking (MMR / reciprocal-rank-fusion) across the two sources before grading.
 2. Web-search fallback when local corpus grades empty (needs provider + SSRF-safe fetch — F-027 guard already exists).
 3. Self-RAG reflection tokens + multi-hop > 2 once quality ROI is measured.
+
+---
+
+## Phase 15 — Benchmark v1, Dashboard, OTel, Cost Tracking, Kaggle Export — 2026-06-15
+
+### Summary
+
+Full-stack benchmark infrastructure added:
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Dataset | `benchmarks/benchmark_v1.yaml` | 60 Preliminary Eval Test Cases (20 shared × 2 modes + 10 MC + 10 finished) |
+| Runner | `scripts/benchmark_v1.py` | yaml-driven harness; loads YAML, runs 50 pending cases, emits results markdown + raw JSON |
+| Results | `benchmarks/BENCHMARK_RESULTS.md` | Live results table (10 done / 50 pending) |
+| Cost module | `backend/core/cost.py` | Per-model USD pricing, `price(model, usage)`, `aggregate_costs(records)` |
+| OTel | `backend/core/telemetry.py` | `OTEL_ENABLED` gated SDK; console + file span exporter; `llm.model/role/tokens/cost` attrs |
+| Dashboard | `frontend/src/pages/dashboard.tsx` | recharts mode analytics, cost panel, trace waterfall, feasibility card |
+| Kaggle export | `backend/evaluation/export_kaggle.py` | CSV + JSONL + reproducer notebook; push via Kaggle API |
+| Export route | `backend/api/routes/export.py` | `POST /export/kaggle`; BYOK creds, CSRF, rate-limited |
+| Benchmark API | `backend/api/routes/benchmark.py` | `GET /benchmark/summary`, `GET /traces` |
+| Tagline | `frontend/src/pages/index.tsx:300` | "Framework for Adversarial Benchmarking & Logic Evaluation" next to FABLE logo |
+| Paper | `paper/fable_neurips2026.tex` | Appendix §: 60-case table + token cost paragraph in Evaluation section |
+
+### Security fix
+
+Swapped decorator order on `backend/api/routes/experiment.py:40-41`: `@limiter.limit` was placed above `@router.post`, making the slowapi rate limit a no-op (slowapi requires the limit decorator to wrap the handler directly). Fixed.
+
+### Token Cost Analysis
+
+Token usage (`ModelResponse.usage = {input, output}`) existed but was never priced. `cost.py` adds:
+
+| Model | Input $/1M | Output $/1M |
+|-------|-----------|------------|
+| anthropic/claude-sonnet-4-5 | $3.00 | $15.00 |
+| anthropic/claude-3.5-haiku  | $0.80 | $4.00  |
+| openai/gpt-4o               | $2.50 | $10.00 |
+| openai/gpt-4o-mini          | $0.15 | $0.60  |
+
+Estimated costs per run:
+- Standard: ~$0.003 (~2,000 input + ~500 output tokens)
+- Adversarial: ~$0.030 (~8,000 input + ~2,000 output tokens, 6 roles × 2 rounds)
+- Monte Carlo: ~$0.045 (~12,000 input + ~3,000 output tokens, 4 variants × 3 models)
+- **Full 50-run pending suite:** $0.10–$0.30
+
+### OpenTelemetry
+
+`OTEL_ENABLED=false` by default (zero overhead). When enabled, spans cover:
+- `fable.llm.complete` / `fable.llm.complete_for_role` (ModelRouter)
+- `fable.run.standard` / `fable.run.adversarial` (route handlers)
+- `fable.experiment.montecarlo` (experiment runner)
+
+Each span carries: `llm.model`, `llm.role`, `llm.tokens.input`, `llm.tokens.output`, `llm.cost.usd`.
+
+Span JSONL file (`data/traces/fable_traces.jsonl`) is OTLP-ready; dashboard reads it for the waterfall view.
+
+### Kaggle Export Use Case
+
+The 60-case benchmark IS the Kaggle artifact. Pushed via:
+1. `POST /export/kaggle` with `{credentials: {username, key}, dataset_slug}`
+2. Backend builds CSV + JSONL + reproducer notebook in a temp dir
+3. Kaggle API creates/versions the dataset + kernel in one call
+4. Dashboard button returns dataset/kernel URLs
+
+Kaggle credentials handled BYOK-style (same as OpenRouter key): accepted per-request, never stored in plaintext, redacted from structured logs and OTel traces.
+
+### Reproducibility
+
+```bash
+# Validate yaml, write placeholder markdown:
+python scripts/benchmark_v1.py --dry-run
+
+# Run all 50 pending cases (backend on :8000):
+python scripts/benchmark_v1.py
+
+# Dashboard:
+# http://localhost:3000/dashboard
+```
