@@ -53,7 +53,7 @@ def benchmark_summary() -> dict:
         return _finished_phase14()
 
     try:
-        from ..core.cost import price as _price
+        from ...core.cost import price as _price
         cost_avail = True
     except ImportError:
         cost_avail = False
@@ -117,3 +117,103 @@ def get_traces(limit: int = 50) -> list[dict]:
     except Exception as exc:
         log.warning("traces_read_error", error=str(exc))
         return []
+
+
+def _load_yaml() -> dict | None:
+    if not _YAML_PATH.exists():
+        return None
+    try:
+        import yaml
+        with open(_YAML_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception as exc:
+        log.warning("benchmark_yaml_read_error", error=str(exc))
+        return None
+
+
+@router.get("/benchmark/runs")
+def benchmark_runs() -> list[dict]:
+    """Normalized per-run rows for the dashboard filters.
+
+    Merges: (1) finished_runs from benchmark_v1.yaml, (2) any completed rows in
+    the latest results JSON, (3) pending placeholders from the yaml shared_questions
+    (one per mode) + montecarlo cases. Each row:
+    {run_id, mode, category, prompt, verdict, score, latency_s, cost_usd, status}.
+    """
+    bench = _load_yaml()
+    if bench is None:
+        return []
+
+    try:
+        from ...core.cost import price as _price
+        cost_avail = True
+    except ImportError:
+        cost_avail = False
+
+    rows: list[dict] = []
+
+    # (1) finished Phase-14 runs
+    for r in bench.get("finished_runs", []):
+        rows.append({
+            "run_id": r.get("run_id"),
+            "mode": r.get("mode"),
+            "category": r.get("category"),
+            "prompt": (r.get("prompt") or "").strip(),
+            "verdict": r.get("verdict"),
+            "score": r.get("score"),
+            "latency_s": r.get("latency_s"),
+            "cost_usd": None,
+            "status": "done",
+        })
+
+    # (2) + (3): completed rows from latest results JSON, else pending placeholders
+    raw = _latest_results() or {}
+    shared = bench.get("shared_questions", [])
+    mc_cases = bench.get("montecarlo", [])
+
+    def _completed_index(records: list[dict]) -> dict[str, dict]:
+        return {r.get("id"): r for r in (records or []) if r.get("id")}
+
+    std_done = _completed_index(raw.get("standard", []))
+    adv_done = _completed_index(raw.get("adversarial", []))
+    mc_done = _completed_index(raw.get("montecarlo", []))
+
+    def _cost(rec: dict) -> float | None:
+        if cost_avail and rec.get("usage"):
+            return round(_price(rec.get("model", ""), rec.get("usage", {}) or {}), 5)
+        return rec.get("cost_usd")
+
+    for q in shared:
+        for mode, done in (("standard", std_done), ("adversarial", adv_done)):
+            rec = done.get(q["id"])
+            if rec:
+                rows.append({
+                    "run_id": f"{mode[:3].upper()}-{q['id']}",
+                    "mode": mode, "category": q["category"],
+                    "prompt": q.get("prompt", "").strip(),
+                    "verdict": rec.get("outcome"), "score": rec.get("score"),
+                    "latency_s": rec.get("elapsed"), "cost_usd": _cost(rec),
+                    "status": "done",
+                })
+            else:
+                rows.append({
+                    "run_id": f"{mode[:3].upper()}-{q['id']}",
+                    "mode": mode, "category": q["category"],
+                    "prompt": q.get("prompt", "").strip(),
+                    "verdict": None, "score": None, "latency_s": None,
+                    "cost_usd": None, "status": "pending",
+                })
+
+    for mc in mc_cases:
+        rec = mc_done.get(mc["id"])
+        rows.append({
+            "run_id": mc["id"], "mode": "montecarlo", "category": mc["category"],
+            "prompt": mc.get("prompt", "").strip(),
+            "verdict": (f"consensus={rec.get('consensus')}" if rec else None),
+            "score": (rec.get("consensus") if rec else None),
+            "latency_s": (rec.get("elapsed") if rec else None),
+            "cost_usd": (rec.get("cost_usd") if rec else None),
+            "status": "done" if rec and rec.get("outcome") == "OK" else "pending",
+        })
+
+    return rows
