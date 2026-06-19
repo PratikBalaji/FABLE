@@ -249,6 +249,26 @@ export async function getBenchmarkSummary(): Promise<BenchmarkSummary> {
   return data;
 }
 
+export type RunMode = "standard" | "adversarial" | "montecarlo";
+export type RunCategory = "code" | "reasoning" | "factual" | "docqa" | "writing";
+
+export interface BenchmarkRun {
+  run_id: string;
+  mode: RunMode;
+  category: RunCategory;
+  prompt: string;
+  verdict: string | null;
+  score: number | null;
+  latency_s: number | null;
+  cost_usd: number | null;
+  status: "done" | "pending";
+}
+
+export async function getBenchmarkRuns(): Promise<BenchmarkRun[]> {
+  const { data } = await api.get<BenchmarkRun[]>("/benchmark/runs");
+  return data;
+}
+
 export interface TraceSpan {
   trace_id: string;
   span_id: string;
