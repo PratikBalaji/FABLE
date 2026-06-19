@@ -37,8 +37,8 @@ async def _resolve_router(auth: AuthedUser | None) -> ModelRouter:
     return default_router
 
 
-@limiter.limit("5/minute")
 @router.post("/experiment/run", response_model=MonteCarloResponse)
+@limiter.limit("5/minute")
 async def experiment_run(
     req: MonteCarloRequest,
     request: Request,
@@ -68,12 +68,18 @@ async def experiment_run(
             detail={"error": "pii_redaction_failed", "reason": str(exc)},
         )
 
-    result = await run_monte_carlo(
-        prompt=redaction.redacted,
-        n_variants=req.n_variants,
-        models=req.models,
-        router=active_router,
-    )
+    try:
+        result = await run_monte_carlo(
+            prompt=redaction.redacted,
+            n_variants=req.n_variants,
+            models=req.models,
+            router=active_router,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "experiment_failed", "reason": str(exc)},
+        ) from exc
 
     # Reinject PII into variants and responses (user sees their own names)
     reinjected_variants = [reinject(v, redaction.entities) for v in result.variants]

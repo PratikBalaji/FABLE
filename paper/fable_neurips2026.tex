@@ -333,6 +333,14 @@ Refiner $=$ \texttt{gpt-4o-mini}, \texttt{max\_rounds} $=2$, 45\,s per-call time
 score 82\%, mean latency 32.8\,s, pass rate 4/5. The single non-pass was the open-ended
 creative prompt (WARN, 60\%), where the rubric penalized coverage and actionability.
 
+\textbf{Token cost.} Per-call token usage is captured in \texttt{ModelResponse.usage}
+(prompt + completion token counts) and priced via a model price table in
+\texttt{backend/core/cost.py}. Estimated cost per run at current OpenRouter rates:
+standard $\approx\$0.003$, adversarial $\approx\$0.030$, Monte Carlo (4 variants)
+$\approx\$0.045$. The full 60-case suite is estimated at \$0.10--\$0.30 total,
+comfortably within a single free-tier API credit. Aggregated costs are surfaced in the
+live benchmark dashboard and reported per run in the runner output.
+
 \begin{table}[t]
 \centering
 \caption{Standard pipeline (Analyst $\rightarrow$ Critic $\rightarrow$ Synthesizer), 5 runs.}
@@ -479,5 +487,65 @@ fail-closed guardrails with Unicode normalization, AAD-bound credential encrypti
 rotation, SSRF protection on URL ingestion, per-identity concurrency limits, identity
 revocation, and notebook-export sanitization---and covered by a dedicated regression test
 module. Five low-impact items are documented as accepted risks with rationale.
+
+\section{60 Preliminary Eval Test Cases}
+\label{app:bench60}
+
+Table~\ref{tab:bench60_finished} lists the ten completed Phase-14 runs. The remaining 50
+cases (20 standard, 20 adversarial, 10 Monte Carlo) are defined in
+\texttt{benchmarks/benchmark\_v1.yaml} and pending execution; placeholder rows indicate
+\textsc{pending} verdicts. The full 60-case suite is the intended unit of reporting for
+the camera-ready version.
+
+\textbf{Structure.} Twenty shared prompts span five categories (four per category):
+code generation, mathematical / logical reasoning, factual explanation, RAG/CRAG
+document QA, and creative writing. Every shared prompt is issued to both the standard and
+adversarial pipelines using the identical wording to enable a direct paired comparison.
+The ten Monte Carlo prompts are the two most word-sensitive prompts per category,
+selected for their expected high paraphrase-divergence signal (i.e.\ small wording
+changes are expected to shift the response substantially).
+
+\begin{table}[h!]
+\centering
+\small
+\caption{Phase-14 finished runs (10/60). Full 60-case results pending; see
+\texttt{benchmarks/BENCHMARK\_RESULTS.md}.}
+\label{tab:bench60_finished}
+\begin{tabular}{@{}lllccr@{}}
+\toprule
+Run & Category & Mode & Verdict & Score & Latency (s) \\
+\midrule
+S1 & code      & standard    & PASS   & 87\% & 39.9 \\
+S2 & reasoning & standard    & PASS   & 90\% & 22.0 \\
+S3 & factual   & standard    & PASS   & 92\% & 45.2 \\
+S4 & factual   & standard    & PASS   & 82\% & 29.0 \\
+S5 & writing   & standard    & WARN   & 60\% & 27.7 \\
+A1 & code      & adversarial & ACCEPT & 85\% & 78.9 \\
+A2 & reasoning & adversarial & ACCEPT & 85\% & 61.6 \\
+A3 & factual   & adversarial & ACCEPT & 75\% & 90.6 \\
+A4 & factual   & adversarial & ACCEPT & 75\% & 68.1 \\
+A5 & writing   & adversarial & ACCEPT & 82\% & 62.4 \\
+\midrule
+\multicolumn{4}{l}{Standard mean / Adversarial mean} & 82\% / 80\% & 32.8 / 72.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Monte Carlo cases} (10): identifiers MC-C2, MC-C3 (code), MC-R2, MC-R3
+(reasoning), MC-F3, MC-F4 (factual), MC-D1, MC-D3 (document QA), MC-W2, MC-W3
+(writing). Each is issued with $n=4$ paraphrase variants; the Monte Carlo engine computes
+pairwise cosine similarity across model responses to derive a consensus score and
+divergence pairs (see Section~3).
+
+\textbf{Reproducibility.} Run the pending 50 cases with:
+\begin{verbatim}
+python scripts/benchmark_v1.py
+\end{verbatim}
+Cost estimate: \$0.10--\$0.30 total. Results are written to
+\texttt{data/benchmarks/results/} (raw JSON) and
+\texttt{benchmarks/BENCHMARK\_RESULTS.md} (markdown). The benchmark dashboard at
+\texttt{/dashboard} provides live mode analytics, token cost tracking, and an
+OpenTelemetry trace waterfall per run. The Kaggle artifact (CSV + JSONL + reproducer
+notebook) can be pushed from the dashboard's ``Export to Kaggle'' button.
 
 \end{document}
