@@ -255,8 +255,11 @@ python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"  #
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
-NEXT_PUBLIC_API_URL=https://<cloud-run-service>-uc.a.run.app
+NEXT_PUBLIC_API_URL=https://<cloud-run-service>-uc.a.run.app   # REQUIRED — without it the client falls back to localhost:8000 and all API calls fail in prod
+BACKEND_URL=https://<cloud-run-service>-uc.a.run.app           # server-side only; drives the Next.js /api/* rewrite proxy
 ```
+
+> ⚠️ `NEXT_PUBLIC_API_URL` is build-time inlined — set it in Vercel **before** the build runs, then redeploy. `BACKEND_URL` is read server-side at request time by `next.config.js` rewrites.
 
 ### Cross-origin notes
 

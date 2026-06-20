@@ -328,7 +328,7 @@ async def push_to_kaggle(
     (never written to ~/.kaggle/kaggle.json to avoid polluting shared envs).
     """
     try:
-        from kaggle.api.kaggle_api_extended import KaggleApiExtended
+        from kaggle.api.kaggle_api_extended import KaggleApi
     except ImportError:
         raise RuntimeError("kaggle package not installed: pip install kaggle")
 
@@ -343,7 +343,7 @@ async def push_to_kaggle(
             env_backup[k] = os.environ.get(k)
             os.environ[k] = v
 
-        api = KaggleApiExtended()
+        api = KaggleApi()
         api.authenticate()
 
         # Dataset metadata
