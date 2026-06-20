@@ -4,8 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import AgentThread from "@/components/panels/AgentThread";
 import WarRoom from "@/components/panels/WarRoom";
 import { PillSwitcher } from "@/components/ui/PillSwitcher";
+import { SegmentedToggle } from "@/components/ui/SegmentedToggle";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { ScorePills } from "@/components/ui/ScorePills";
 import { Composer } from "@/components/composer/Composer";
+import { Orbit, Swords, MessageSquare, BarChart3 } from "lucide-react";
 import {
   runTask,
   runTaskStream,
@@ -41,36 +44,12 @@ const MODE_OPTIONS  = [
 ];
 // Experiment is a MODE, not a view — when mode==="experiment" the canvas shows
 // ExperimentView directly and the view switcher is hidden.
-const VIEW_OPTIONS  = [
-  { value: "graph"      as View, label: "Universe" },
-  { value: "warroom"    as View, label: "War Room" },
-  { value: "thread"     as View, label: "Thread" },
+// Icon-only view toggle for the minimal header (replaces the old centered pill row).
+const VIEW_ICON_OPTIONS = [
+  { value: "graph"   as View, label: "", icon: <Orbit size={14} /> },
+  { value: "warroom" as View, label: "", icon: <Swords size={14} /> },
+  { value: "thread"  as View, label: "", icon: <MessageSquare size={14} /> },
 ];
-
-// ─── Judge verdict chip ───────────────────────────────────────────────────────
-function JudgeChip({ meta }: { meta: AdversarialMeta }) {
-  const accepted = meta.judge_verdict === "ACCEPT";
-  const color = accepted ? "#a6e3a1" : "#f38ba8";
-  return (
-    <motion.span
-      initial={{ opacity: 0, y: -4, scale: 0.9 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      transition={{ type: "spring", stiffness: 380, damping: 30 }}
-      className="text-[10px] font-mono px-2.5 py-1 rounded-full font-medium"
-      style={{
-        background: `${color}12`,
-        color,
-        boxShadow: `0 0 0 1px ${color}30, 0 0 10px ${color}20`,
-        textShadow: `0 0 10px ${color}80`,
-      }}
-      title={meta.judge_rationale}
-    >
-      {accepted ? "✓ ACCEPT" : "✗ REJECT"} {Math.round(meta.judge_score * 100)}%
-      {meta.rounds_completed > 0 && ` · ${meta.rounds_completed}r`}
-    </motion.span>
-  );
-}
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function Home() {
@@ -299,12 +278,6 @@ export default function Home() {
           >
             FABLE
           </span>
-          <span
-            className="hidden sm:block text-[10px] tracking-wide"
-            style={{ color: "#6c6c8a", lineHeight: 1.2, maxWidth: 220 }}
-          >
-            Framework for Adversarial Benchmarking &amp; Logic Evaluation
-          </span>
         </div>
 
         {/* Mode switcher — centre */}
@@ -320,104 +293,55 @@ export default function Home() {
               setSubmittedPrompt("");
               // When switching away from experiment, restore graph view (not warroom);
               // only force-switch if the current view would be hidden (experiment has no sub-views).
-              if (m === "experiment") {
-                // no view switcher shown in experiment mode — keep activeView state for when we leave
-              } else if (activeView === "graph" || m !== "experiment") {
-                // stay on whatever view the user was on
-              }
+              // no view switcher shown in experiment mode; otherwise stay on the
+              // view the user was already on. Both cases are no-ops — activeView
+              // state is preserved as-is for when the user leaves experiment mode.
             }}
             size="sm"
           />
         </div>
 
-        {/* Right meta chips */}
-        <div className="flex items-center gap-2">
+        {/* Right cluster — view icons · dashboard · adaptive status */}
+        <div className="flex items-center gap-2.5">
+          {mode !== "experiment" && (
+            <SegmentedToggle
+              size="sm"
+              value={activeView}
+              onChange={setActiveView}
+              options={VIEW_ICON_OPTIONS}
+            />
+          )}
           <a
             href="/dashboard"
-            className="text-[10px] font-mono px-2.5 py-1 rounded-full transition-colors"
-            style={{ color: "#6c6c8a", border: "1px solid rgba(108,108,138,0.25)" }}
+            className="flex items-center justify-center w-7 h-7 rounded-full transition-colors"
+            style={{ color: "#9494aa" }}
             title="Benchmark Dashboard"
+            aria-label="Open dashboard"
           >
-            📊 Dashboard
+            <BarChart3 size={15} />
           </a>
-          <AnimatePresence>
-            {adversarialMeta && <JudgeChip key="judge" meta={adversarialMeta} />}
-            {recycledMeta?.recycled && (
-              <motion.span
-                key="recycled"
-                initial={{ opacity: 0, y: -4, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                className="text-[10px] font-mono px-2.5 py-1 rounded-full font-medium"
-                style={{
-                  background: "rgba(249,226,175,0.10)",
-                  color: "#f9e2af",
-                  boxShadow: "0 0 0 1px rgba(249,226,175,0.25), 0 0 10px rgba(249,226,175,0.12)",
-                }}
-                title={`Golden case ${recycledMeta.golden_run_id.slice(0, 8)}`}
-              >
-                ♻ {Math.round(recycledMeta.similarity * 100)}% match
-              </motion.span>
-            )}
-          </AnimatePresence>
-          {isLoading && (
-            <motion.span
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="text-[10px] font-mono"
-              style={{ color: "#6b6b8a" }}
-            >
-              ● running…
-            </motion.span>
-          )}
-          {modelUsed && !isLoading && (
-            <span
-              className="text-[10px] font-mono rounded-full px-2.5 py-1"
-              style={{ background: "rgba(203,166,247,0.07)", color: "#9494aa" }}
-            >
-              {modelUsed.split("/").pop()}
-            </span>
-          )}
-          {totalRuns > 0 && (
-            <span
-              className="text-[10px] font-mono rounded-full px-2.5 py-1 hidden sm:inline"
-              style={{ background: "rgba(10,10,22,0.6)", color: "#6b6b8a" }}
-            >
-              {totalRuns} runs
-            </span>
-          )}
-          {taskId && (
-            <span
-              className="text-[10px] font-mono rounded-full px-2 py-1 hidden md:inline"
-              style={{ color: "#35354d" }}
-            >
-              #{taskId.slice(0, 6)}
-            </span>
-          )}
-        </div>
-      </header>
-
-      {/* ─── View pill switcher (hidden in Experiment mode — it has no sub-views) ─ */}
-      {mode !== "experiment" && (
-        <div
-          className="fixed z-40 flex justify-center"
-          style={{ top: 60, insetInline: 0 }}
-        >
-          <PillSwitcher
-            options={VIEW_OPTIONS}
-            value={activeView}
-            onChange={setActiveView}
-            size="sm"
+          <StatusPill
+            isLoading={isLoading}
+            verdict={adversarialMeta ? {
+              label: adversarialMeta.judge_verdict,
+              score: adversarialMeta.judge_score,
+              accepted: adversarialMeta.judge_verdict === "ACCEPT",
+            } : null}
+            model={!isLoading ? modelUsed : undefined}
+            totalRuns={totalRuns}
+            taskId={taskId}
+            recycled={recycledMeta?.recycled ? {
+              similarity: recycledMeta.similarity,
+              goldenRunId: recycledMeta.golden_run_id,
+            } : null}
           />
         </div>
-      )}
+      </header>
 
       {/* ─── Main canvas ──────────────────────────────────────────────────────── */}
       <main
         className="h-screen overflow-hidden"
-        style={{ paddingTop: 108, paddingBottom: 148 }}
+        style={{ paddingTop: 64, paddingBottom: 148 }}
       >
         <div className="h-full overflow-hidden">
           <AnimatePresence mode="wait">
