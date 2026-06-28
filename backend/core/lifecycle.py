@@ -212,11 +212,15 @@ async def _run_core_inner(
         },
     )
 
-    # Step 3: Stream agent pipeline — yield each message as it completes
+    # Step 3: Agent pipeline. Phase 19 — orchestrator is swappable here and ONLY here;
+    # all surrounding logic (cache, guardrails, scoring, persistence) is shared so the
+    # comparison isolates orchestration. "langchain" runs the pipeline as an LCEL
+    # RunnableSequence (no live streaming → messages emitted after completion); the
+    # default "asyncio" path streams each message as it completes.
     messages: list[AgentMessage] = []
-    async for msg in bus.stream_collaboration(task_ctx, pipeline):
-        messages.append(msg)
-        yield {
+
+    def _emit(msg: AgentMessage) -> dict:
+        return {
             "type": "agent_message",
             "data": {
                 "role": msg.role,
@@ -227,6 +231,26 @@ async def _run_core_inner(
                 "summary": "",
             },
         }
+
+    use_langchain = settings.orchestrator == "langchain"
+    if use_langchain:
+        try:
+            from ..chains.standard_chain import run_pipeline_langchain
+        except ImportError:  # optional dep absent → use native loop (no dispatch happened)
+            from structlog import get_logger
+            get_logger().warning("langchain_not_installed_fallback_asyncio")
+            use_langchain = False
+        else:
+            # Runtime errors here propagate — do NOT re-run the pipeline (would double-dispatch).
+            messages = await run_pipeline_langchain(task_ctx, pipeline)
+
+    if use_langchain:
+        for msg in messages:
+            yield _emit(msg)
+    else:
+        async for msg in bus.stream_collaboration(task_ctx, pipeline):
+            messages.append(msg)
+            yield _emit(msg)
 
     serialized = [
         {

@@ -55,7 +55,24 @@ class ModelRouter:
         force_model: str | None = None,
     ) -> ModelResponse:
         model = force_model or settings.primary_model
-        return await self._call_model(model, system, user, max_tokens=2048)
+        fallback_chain = [model, settings.secondary_model]
+        seen: set[str] = set()
+        last_exc: Exception | None = None
+        for candidate in fallback_chain:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                return await self._call_model(candidate, system, user, max_tokens=2048)
+            except openai.BadRequestError as exc:
+                log.warning("complete_bad_request", model=candidate, role=role_hint, error=str(exc))
+                last_exc = exc
+            except openai.NotFoundError as exc:
+                log.warning("complete_model_not_found", model=candidate, role=role_hint, error=str(exc))
+                last_exc = exc
+        raise RuntimeError(
+            f"All models failed for role '{role_hint}'. Last error: {last_exc}"
+        ) from last_exc
 
     async def _call_model(self, model: str, system: str, user: str, max_tokens: int) -> ModelResponse:
         resp = await self._client.chat.completions.create(

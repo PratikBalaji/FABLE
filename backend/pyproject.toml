@@ -56,6 +56,15 @@ local-embeddings = [
 benchmark = [
     "matplotlib>=3.7",
 ]
+# Phase 19: alternate orchestrators for the LangChain-vs-LangGraph research comparison.
+# Optional — the default ORCHESTRATOR=asyncio path needs none of these. Modules import
+# them lazily and fall back to asyncio if absent, so the slim image stays unaffected.
+orchestrators = [
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+]
 dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",

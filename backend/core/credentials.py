@@ -116,7 +116,11 @@ async def validate_key(
                 )
             elif provider == "google":
                 resp = await client.get(f"{base}/models", headers={"Authorization": f"Bearer {api_key}"})
-            else:  # openrouter, openai
+            elif provider == "openrouter":
+                # OpenRouter's /models is PUBLIC (200 for any key) → use the
+                # auth-required /key endpoint so a bogus key is correctly rejected.
+                resp = await client.get(f"{base}/key", headers={"Authorization": f"Bearer {api_key}"})
+            else:  # openai
                 resp = await client.get(f"{base}/models", headers={"Authorization": f"Bearer {api_key}"})
     except Exception as exc:  # noqa: BLE001
         return False, f"request failed: {exc}"

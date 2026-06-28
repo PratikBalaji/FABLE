@@ -9,6 +9,7 @@ from ..schemas import MonteCarloRequest, MonteCarloResponse
 from ...core.auth import AuthedUser, get_optional_user
 from ...core.config import settings
 from ...core.credentials import resolve_credential
+from ...core.byok import byok_router_from_headers
 from ...core.identity import resolve_identity, set_identity_cookie
 from ...core.pii import PiiRedactionFailed, redact, reinject
 from ...experiment.montecarlo import run_monte_carlo
@@ -26,7 +27,15 @@ def _require_csrf(x_fable_request: str = Header(default="")) -> None:
         )
 
 
-async def _resolve_router(auth: AuthedUser | None) -> ModelRouter:
+async def _resolve_router(
+    auth: AuthedUser | None,
+    byok_key: str = "",
+    byok_base_url: str = "",
+    byok_provider: str = "",
+) -> ModelRouter:
+    session = byok_router_from_headers(byok_key, byok_base_url, byok_provider)
+    if session is not None:
+        return session
     if settings.use_supabase and auth:
         try:
             cred = await resolve_credential(auth.id)
@@ -45,6 +54,9 @@ async def experiment_run(
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
     _csrf: None = Depends(_require_csrf),
+    x_byok_key: str = Header(default=""),
+    x_byok_base_url: str = Header(default=""),
+    x_byok_provider: str = Header(default=""),
 ) -> MonteCarloResponse:
     """Run a Monte Carlo prompt robustness experiment.
 
@@ -57,7 +69,7 @@ async def experiment_run(
         if ident.cookie_to_set:
             set_identity_cookie(response, ident.cookie_to_set)
 
-    active_router = await _resolve_router(auth)
+    active_router = await _resolve_router(auth, x_byok_key, x_byok_base_url, x_byok_provider)
 
     # PII redaction — must run before any LLM call
     try:
