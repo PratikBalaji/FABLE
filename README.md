@@ -86,6 +86,11 @@ notebooks/      # Kaggle-ready .ipynb (fable_demo.ipynb committed; generated fil
 | 13 | GSM8K Benchmark — 500-problem math benchmark harness, bootstrap CI, McNemar |
 | 14 | Latency + Eval — Phase-14 eval harness; 5 std + 5 adv runs; latency + judge fixes |
 | 15 | Benchmark v1 + Dashboard — 60-case suite, recharts dashboard, OTel tracing, cost tracking, Kaggle export |
+| 16 | Orchestrator Comparison — pluggable asyncio / LangChain / LangGraph backends, self-consistency ensemble, LangSmith tracing, rate-limit dashboard controls |
+
+> **Note:** this README's phase numbers track the README's own changelog and do **not**
+> map 1:1 to `RESEARCH_LOG.md` (which numbers the same orchestrator work as Phase 19 and
+> the benchmark as Phase 20). The log is the canonical research record.
 
 **Adversarial rounds:** Default `max_rounds = 2`. Judge terminates early (round 1) when score ≥ 0.80. Configurable via `ADVERSARIAL_MAX_ROUNDS`; hard ceiling 10 server-side.
 
@@ -179,6 +184,62 @@ export OTEL_TRACES_FILE=./data/traces/fable_traces.jsonl  # optional
 ```
 
 Span JSONL is OTLP-ready — point any Jaeger/OTLP collector at the file without restart. The dashboard waterfall reads the same file locally.
+
+---
+
+## Orchestrators — asyncio · LangChain · LangGraph (Phase 16)
+
+The agent pipelines run on a swappable orchestrator, selected by `ORCHESTRATOR`
+(default `asyncio`). All three share the **same agent handlers, prompts, and OpenRouter
+routing** — only the orchestration layer changes, so the benchmark isolates the
+orchestrator for a clean LangChain-vs-LangGraph comparison.
+
+```bash
+# Optional framework deps (slim Cloud Run image is unaffected — lazy-imported):
+pip install -e "backend[orchestrators]"     # langgraph, langchain-core, langchain, langchain-openai
+
+ORCHESTRATOR=asyncio    # native AgentBus (default / baseline)
+ORCHESTRATOR=langgraph  # adversarial loop via LangGraph StateGraph (operator.add fan-in reducer)
+ORCHESTRATOR=langchain  # standard pipeline via LangChain LCEL RunnableSequence
+```
+
+If the framework deps are absent, the alternate paths fall back to `asyncio` (no crash).
+
+**Self-consistency ensemble:** run N independent debates concurrently and keep the
+highest `judge_score` (run-level map-reduce; the per-round reviewer chain stays
+sequential because Validator/Refiner depend on Critic):
+
+```bash
+ADVERSARIAL_ENSEMBLE_SIZE=5   # default 1 = single debate, original behavior
+```
+
+**LangSmith tracing (optional):** LangChain/LangGraph auto-emit traces when enabled.
+
+```bash
+export LANGCHAIN_TRACING_V2=true
+export LANGCHAIN_API_KEY=<your key>
+export LANGCHAIN_PROJECT=fable
+```
+
+No key → tracing off, hot path untouched (Cloud Run safe).
+
+---
+
+## Rate Limiting (Phase 16)
+
+Per-IP limits (slowapi) + per-identity in-process concurrency, now with response
+headers and a project-wide backstop. Live config is exposed at `GET /config/limits` and
+shown on the dashboard **Rate Limits** card; a 429 surfaces a retry message in the UI.
+
+```bash
+RATE_LIMIT_GLOBAL=100/minute            # project-wide default on every route (per IP)
+RATE_LIMIT_RUN=20/minute                # /run, /run/stream
+RATE_LIMIT_ADV=5/minute                 # /adversarial-run
+MAX_CONCURRENT_PER_IDENTITY=2           # in-flight runs per user (0 = unlimited)
+```
+
+Responses on rate-limited routes carry `X-RateLimit-Limit/Remaining/Reset`; exceeding a
+limit returns HTTP 429 with `Retry-After`.
 
 ---
 
@@ -283,6 +344,7 @@ CORS_ORIGINS=https://your-vercel-app.vercel.app   # restrict CORS from default l
 AGENT_INTERNAL_TOKEN=<base64 32 random bytes>      # coordinator→pod auth (K8s mode)
 RATE_LIMIT_RUN=20/minute
 RATE_LIMIT_ADV=5/minute
+RATE_LIMIT_GLOBAL=100/minute                       # project-wide per-IP backstop
 ```
 
 > ⚠️ Never set `ENV=local` or `COOKIE_SECURE=false` on a deployed host — auth enforcement is bypassed in local mode.

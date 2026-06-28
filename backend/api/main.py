@@ -11,13 +11,15 @@ from ..agents.register import register_all
 from ..agents.adversarial_register import register_adversarial
 from ..core.config import settings
 from .limiter import limiter
-from .routes import run, feedback, ingest, graph, identity, providers, sessions, auth_openrouter, experiment, export, benchmark
+from .routes import run, feedback, ingest, graph, identity, providers, sessions, auth_openrouter, experiment, export, benchmark, config as config_routes
 
 log = structlog.get_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from ..core.tracing import configure_langsmith
+    configure_langsmith()  # Phase 19: optional LangSmith tracing (no-op without key)
     register_all()
     register_adversarial()
     log.info("fable_started")
@@ -56,6 +58,7 @@ app.include_router(auth_openrouter.router, tags=["OAuth"])
 app.include_router(experiment.router, tags=["Experiment"])
 app.include_router(export.router, tags=["Export"])
 app.include_router(benchmark.router, tags=["Benchmark"])
+app.include_router(config_routes.router, tags=["Config"])
 
 
 @app.get("/health")

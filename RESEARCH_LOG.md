@@ -18,10 +18,21 @@
 | [Phase 7](#phase-7--kubernetes-local-agent-scaling) | Kubernetes (kind) — local agent scaling, 3 pod groups |
 | [Phase 8](#phase-8--security-hardening) | Security Hardening — 40-finding appsec audit, 10 patches applied |
 | [Phase 9](#phase-9--document-upload--glassmorphic-ui) | Document Upload + Glassmorphic UI — PDF/DOCX/MD, framer-motion |
-| [Phase 10](#phase-10-feasibility--presidio-on-docker-sidecar) | Feasibility: Presidio on Docker Sidecar |
-| [Phase 11](#phase-11-feasibility--extreme-learning-machine-elm) | Feasibility: Extreme Learning Machine (ELM) as meta-scorer |
-| [Phase 12](#phase-12-feasibility--pod--model-role-rebalancing) | Feasibility: Pod & Model Role Rebalancing by Benchmark |
-| [Phase 13](#phase-13-feasibility--monte-carlo-experiment-mode) | Feasibility: Monte Carlo Experiment Mode |
+| [Phase 10](#phase-10--presidio-on-docker-sidecar--implemented-2026-06-13) | Presidio on Docker Sidecar (implemented) |
+| [Phase 11](#phase-11--extreme-learning-machine-elm-as-meta-scorer--implemented) | Extreme Learning Machine (ELM) as meta-scorer (implemented) |
+| [Phase 12](#phase-12--pod--model-role-rebalancing--implemented-2026-06-13) | Pod & Model Role Rebalancing (implemented) |
+| [Phase 13](#phase-13--monte-carlo-experiment-mode--implemented-2026-06-13) | Monte Carlo Experiment Mode (implemented) |
+| [Phase 14](#phase-14--latency-fix--evaluation-runs) | Latency Fix + Evaluation Runs |
+| [Phase 15](#phase-15--golden-case-reasoning-cache--2026-06-13) | Golden-Case Reasoning Cache |
+| [Phase 16](#phase-16--curated-rag-seed-corpus--2026-06-13) | Curated RAG Seed Corpus |
+| [Phase 17](#phase-17-feasibility--document-vision-for-financecode-domains) | Feasibility: Document Vision for Finance/Code Domains |
+| [Phase 18](#phase-18--agentic-rag-corrective-rag--crag-lite--2026-06-14) | Agentic RAG (Corrective RAG / CRAG-lite) |
+| [Phase 19](#phase-19--orchestrator-comparison--ensemble--rate-limits--2026-06-28) | Orchestrator comparison (asyncio vs LangChain vs LangGraph), self-consistency ensemble, LangSmith, rate-limit controls |
+| [Phase 20](#phase-20--benchmark-v1-dashboard-otel-cost-tracking-kaggle-export--2026-06-15) | Benchmark v1, Dashboard, OTel, Cost Tracking, Kaggle Export |
+
+> **Note:** phases are listed in numeric order; section bodies below follow
+> chronological authoring order, so Phase 20 (2026-06-15) appears after Phase 18/19.
+> Implementation-note subsections for Phases 11–13 follow Phase 14.
 
 ---
 
@@ -40,6 +51,12 @@ The six-role design maps to a formal adversarial proof system:
 - **Judge** — decides acceptance (verifier/arbiter)
 
 ### LLM Role Assignment Rationale
+
+> **Superseded — original design only.** This table is the Phase-1 design. The model
+> assignments were rebalanced in [Phase 12](#phase-12--pod--model-role-rebalancing--implemented-2026-06-13)
+> after `meta-llama/llama-3-70b-instruct` proved unroutable on OpenRouter. **Current
+> `config.py` values:** Critic = `anthropic/claude-3.5-haiku`, Validator =
+> `openai/gpt-4o-mini`, Refiner = `openai/gpt-4o-mini` (Planner/Actor/Judge unchanged).
 
 | Role | LLM | Justification |
 |------|-----|---------------|
@@ -77,6 +94,11 @@ The six-role design maps to a formal adversarial proof system:
 - Judge instrumented to return raw JSON; `_parse_judge_output()` strips markdown fences, falls back to `re.search` for embedded JSON — robust against LLM formatting drift.
 
 **Token budgets (role-calibrated):**
+
+> **Superseded:** Judge was raised 1024 → **2560** in [Phase 14](#phase-14--latency-fix--evaluation-runs)
+> (a 1024-cap truncated the judge's JSON mid-`final_answer`, causing false REJECTs). All
+> other budgets below are still current (`_TOKEN_BUDGETS` in `backend/agents/adversarial.py`).
+
 | Role | max_tokens | Rationale |
 |------|-----------|-----------|
 | Actor | 2048 | Needs complete solutions |
@@ -1067,7 +1089,11 @@ measurable via the existing rubric scores.
 
 ---
 
-## Phase 15 — Benchmark v1, Dashboard, OTel, Cost Tracking, Kaggle Export — 2026-06-15
+## Phase 20 — Benchmark v1, Dashboard, OTel, Cost Tracking, Kaggle Export — 2026-06-15
+
+> **Renumbering note (2026-06-28):** this section was originally labeled "Phase 15",
+> colliding with the Golden-Case Reasoning Cache (also 15). Renumbered to Phase 20 to
+> resolve the duplicate; content and 2026-06-15 date unchanged.
 
 ### Summary
 
@@ -1141,3 +1167,145 @@ python scripts/benchmark_v1.py
 # Dashboard:
 # http://localhost:3000/dashboard
 ```
+
+---
+
+## Phase 19 — Orchestrator Comparison + Ensemble + Rate Limits — 2026-06-28
+
+### Motivation
+
+The paper needs a concrete framework axis: how does the native asyncio orchestration
+compare against the two dominant agent frameworks, **LangChain** and **LangGraph**, on
+the *same* protocol and benchmark? Phase 19 adds both as swappable orchestrators behind
+a single flag, plus a run-level self-consistency ensemble, LangSmith tracing, and the
+rate-limit controls the dashboard was missing.
+
+### Design principle: isolate the orchestration layer
+
+All three orchestrators share the same agent handlers (`backend/agents/`), the same
+OpenRouter routing (`router/model_router.py`), and the same surrounding logic (RAG,
+guardrails, scoring, persistence). Only the *round/pipeline orchestration* is swapped.
+This makes the comparison a clean ablation — differences in latency/score reflect the
+orchestrator, not the prompts. Selected by `ORCHESTRATOR=asyncio|langgraph|langchain`
+(default `asyncio`, the baseline/control). Frameworks are an **optional** dependency
+group (`pip install -e ".[orchestrators]"`); modules import them lazily and fall back to
+asyncio if absent, so the slim Cloud Run image is unaffected.
+
+### Key engineering finding: reviewers are a dependency chain, not parallel
+
+The intuitive "fan out Critic/Validator/Refiner after the Actor" is **wrong**. Reading
+`agents/adversarial.py` `build_prompt`, the per-round reviewers form a width-1 DAG:
+Critic←(actor); Validator←(actor, **critic**); Refiner←(actor, **critic**,
+**validator**). Naively parallelizing them would feed Validator an empty Critic and
+silently degrade the protocol (and the benchmark). So the round chain stays sequential;
+parallelism is taken at the **run level** instead.
+
+### Track A — Run-level self-consistency ensemble
+
+`ADVERSARIAL_ENSEMBLE_SIZE=N` runs N independent debates concurrently
+(`asyncio.gather`), each with its own `TaskContext` (separate history → no shared-state
+race), then reduces to the highest `judge_score` (`_run_adversarial_ensemble` in
+`core/adversarial_lifecycle.py`). Default 1 = original single-debate path unchanged. The
+whole ensemble shares one per-identity concurrency slot. Variation across debates comes
+from LLM nondeterminism (temp>0); chat-turn persistence is intentionally skipped in
+ensemble mode (full transcript still stored) since interactive chat uses N=1.
+
+### Track B — LangGraph view graph (`backend/graph/adversarial_graph.py`)
+
+A `StateGraph` whose nodes wrap the registered handlers via `bus.dispatch`. The
+`messages` channel uses an `operator.add` **reducer** (the fan-in). Edges follow the
+real width-1 DAG; a conditional edge after `adv:judge` loops to the Actor on REJECT or
+ends on ACCEPT / rounds-exhausted, mirroring `max_rounds`. ELM dynamic roles are honored
+by building the node set per run from `active_round_roles()`. The native loop was
+refactored into `_run_rounds_asyncio` so both orchestrators return the same
+`(round_messages, judge_result, rounds_completed)` triple.
+
+### Track C — LangChain standard mode (`backend/chains/standard_chain.py`)
+
+The linear standard pipeline (analyst → critic → synthesizer) is composed as an LCEL
+`RunnableSequence` of `RunnableLambda`s, each dispatching the existing handler. Real
+LangChain runtime + LangSmith traces, parity by construction (no prompt reimplementation
+→ no drift). Swapped in at the single `bus.stream_collaboration` call in `lifecycle.py`.
+
+### Track D — LangSmith tracing (`backend/core/tracing.py`)
+
+`configure_langsmith()` (called at app startup) exports `LANGCHAIN_*` env vars only when
+`LANGCHAIN_TRACING_V2=true` and an API key are set. No key → tracing off, hot path
+untouched, Cloud Run safe.
+
+### Track E — Rate-limit controls
+
+slowapi now has `headers_enabled=True` + a project-wide default limit
+(`RATE_LIMIT_GLOBAL`, default 100/min). New `GET /config/limits` endpoint exposes the
+config; new dashboard **Rate Limits** card (`frontend/.../RateLimitCard.tsx`) + sidebar
+entry display them; the axios interceptor now maps 429 → a retry message using
+`Retry-After`.
+
+### Track F — Supabase RLS audit (COMPLETE — 2026-06-28)
+
+Resumed the `fable` project (`cmlbxpedysdsfbdmithr`, was paused) and ran
+`list_tables` + `get_advisors(security)`. Findings:
+
+- **Schema design is RLS-correct.** `infra/supabase/schema.sql` (444 lines) creates 12
+  `public` tables (`profiles`, `provider_connections`, `oauth_states`, `chat_sessions`,
+  `chat_messages`, `adversarial_runs`, `adversarial_messages`, `memory_chunks`,
+  `guardrail_events`, `identities`, `pii_entity_map`, `revoked_identities`) and contains
+  **12 `ENABLE ROW LEVEL SECURITY` statements (one per table) + 20 policies** — so my
+  earlier note that "no policy SQL exists in-repo" was wrong; the policies live in
+  `schema.sql`, not in numbered migrations.
+- **But the schema is NOT deployed on this project.** Live `public` schema has **zero
+  application tables** — only Supabase's built-in `auth.*` system tables exist. The
+  security advisor returns no lints because there are no app tables to evaluate, not
+  because RLS passed.
+- **No current exposure.** Backend defaults to `USE_SUPABASE=false` (no DB access), so
+  the empty project is not a live risk today.
+
+**Action before enabling multi-user:** apply `infra/supabase/schema.sql` via the
+Supabase SQL editor (idempotent), set `USE_SUPABASE=true`, then re-run
+`get_advisors(security)` to confirm 0 RLS findings on the 12 app tables. (Schema was not
+auto-applied here — DDL on the shared project, out of scope for this pass.)
+
+### Validation status — 2026-06-28
+
+Deps installed: `langgraph 1.2.6`, `langchain 1.3.11`, `langchain-core 1.4.8`,
+`langchain-openai 1.3.3` (newer than the `>=0.3` floors; the StateGraph / LCEL API used
+is unchanged in 1.x). One LangGraph-1.x fix was needed: node names cannot contain `:`,
+so roles are mapped `adv:actor → adv_actor` for node IDs while still dispatching the
+real `adv:` role (`graph/adversarial_graph.py::_node_name`).
+
+**In-process smoke run** (single prompt, max_rounds=1, live OpenRouter) confirmed all
+four paths execute end-to-end with **identical pipelines**:
+
+| Mode | Orchestrator | Pipeline executed | Verdict |
+|------|--------------|-------------------|---------|
+| adversarial | asyncio   | planner→actor→critic→validator→refiner→judge | ACCEPT 0.75 |
+| adversarial | langgraph | planner→actor→critic→validator→refiner→judge | ACCEPT 0.95 |
+| standard    | asyncio   | analyst→critic→synthesizer | WARN |
+| standard    | langchain | analyst→critic→synthesizer (LCEL RunnableSequence) | PASS |
+
+The pipelines match exactly across orchestrators; score deltas reflect LLM
+nondeterminism on a single sample, not orchestration differences (same handlers, same
+prompts). This validates the plumbing; the full statistical comparison still needs the
+60-case suite.
+
+### Reproducibility — full benchmark (TODO: needs provider keys + run time)
+
+```bash
+# Optional framework deps:
+python -m pip install "langgraph>=0.2" "langchain-core>=0.3" "langchain>=0.3" "langchain-openai>=0.2"
+# (or: pip install -e "./backend[orchestrators]")
+
+# Run the 60-case suite under each orchestrator (backend on :8000):
+ORCHESTRATOR=asyncio   python scripts/benchmark_v1.py
+ORCHESTRATOR=langgraph python scripts/benchmark_v1.py
+ORCHESTRATOR=langchain python scripts/benchmark_v1.py   # standard-mode cases
+
+# Self-consistency ensemble:
+ADVERSARIAL_ENSEMBLE_SIZE=5 python scripts/benchmark_v1.py
+
+# Optional LangSmith traces: set LANGCHAIN_TRACING_V2=true + LANGCHAIN_API_KEY.
+```
+
+**Parity gate:** correctness scores must match within tolerance across orchestrators
+before any comparison claim — divergence indicates a bug, not a result. The 3-way
+latency/score/token table over all 60 cases is the remaining Phase 19 deliverable.

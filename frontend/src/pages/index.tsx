@@ -8,7 +8,9 @@ import { SegmentedToggle } from "@/components/ui/SegmentedToggle";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { ScorePills } from "@/components/ui/ScorePills";
 import { Composer } from "@/components/composer/Composer";
-import { Orbit, Swords, MessageSquare, BarChart3 } from "lucide-react";
+import { Orbit, Swords, MessageSquare, BarChart3, KeyRound } from "lucide-react";
+import { ByokModal } from "@/components/ByokModal";
+import { getByok } from "@/lib/api";
 import {
   runTask,
   runTaskStream,
@@ -74,6 +76,9 @@ export default function Home() {
   const [submittedPrompt,  setSubmittedPrompt]  = useState<string>("");
   const [historyOpen,      setHistoryOpen]      = useState(false);
   const [historyRefresh,   setHistoryRefresh]   = useState(0);
+  const [byokOpen,         setByokOpen]         = useState(false);
+  const [byokSet,          setByokSet]          = useState(false);
+  useEffect(() => { setByokSet(!!getByok()?.key); }, [byokOpen]);
 
   useEffect(() => {
     getGraph().then(setGraphState).catch(() => {});
@@ -311,6 +316,15 @@ export default function Home() {
               options={VIEW_ICON_OPTIONS}
             />
           )}
+          <button
+            onClick={() => setByokOpen(true)}
+            className="flex items-center justify-center w-7 h-7 rounded-full transition-colors"
+            style={{ color: byokSet ? "#a6e3c4" : "#9494aa" }}
+            title={byokSet ? "Your API key is set (browser-only)" : "Use your own API key"}
+            aria-label="Set your API key"
+          >
+            <KeyRound size={15} />
+          </button>
           <a
             href="/dashboard"
             className="flex items-center justify-center w-7 h-7 rounded-full transition-colors"
@@ -451,6 +465,8 @@ export default function Home() {
         onSelect={handleSelectHistory}
         refreshKey={historyRefresh}
       />
+
+      {byokOpen && <ByokModal onClose={() => setByokOpen(false)} />}
     </div>
   );
 }
