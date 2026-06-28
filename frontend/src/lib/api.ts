@@ -14,6 +14,44 @@ const api = axios.create({
   },
 });
 
+// ─── Session BYOK (no login, browser-only) ──────────────────────────────────
+// Key lives in localStorage; sent per-request via headers; never persisted server-side.
+export interface ByokConfig { provider: string; key: string; baseUrl?: string }
+const BYOK_LS_KEY = "fable_byok";
+
+export function getByok(): ByokConfig | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(BYOK_LS_KEY);
+    return raw ? (JSON.parse(raw) as ByokConfig) : null;
+  } catch { return null; }
+}
+export function setByok(cfg: ByokConfig): void {
+  if (typeof window !== "undefined") window.localStorage.setItem(BYOK_LS_KEY, JSON.stringify(cfg));
+}
+export function clearByok(): void {
+  if (typeof window !== "undefined") window.localStorage.removeItem(BYOK_LS_KEY);
+}
+
+/** Header map for the active session BYOK key (empty if none set). */
+export function byokHeaders(): Record<string, string> {
+  const b = getByok();
+  if (!b?.key) return {};
+  const h: Record<string, string> = { "X-BYOK-Key": b.key };
+  if (b.baseUrl) h["X-BYOK-Base-URL"] = b.baseUrl;
+  if (b.provider) h["X-BYOK-Provider"] = b.provider;
+  return h;
+}
+
+// Attach BYOK headers to every axios request when a session key is set.
+api.interceptors.request.use((cfg) => {
+  const h = byokHeaders();
+  for (const [k, v] of Object.entries(h)) {
+    cfg.headers.set?.(k, v) ?? (cfg.headers[k] = v);
+  }
+  return cfg;
+});
+
 // Map raw network errors to user-readable messages
 api.interceptors.response.use(
   (res) => res,
@@ -27,6 +65,11 @@ api.interceptors.response.use(
       return Promise.reject(
         new Error("Cannot reach backend. Set NEXT_PUBLIC_API_URL in Vercel env and redeploy.")
       );
+    }
+    if (err.response.status === 429) {
+      const retry = err.response.headers?.["retry-after"];
+      const wait = retry ? ` Retry in ${retry}s.` : "";
+      return Promise.reject(new Error(`Rate limit hit — too many requests.${wait}`));
     }
     const detail = (err.response.data as Record<string, unknown>)?.detail;
     return Promise.reject(
@@ -146,6 +189,7 @@ export async function* runTaskStream(params: {
     headers: {
       "Content-Type": "application/json",
       "X-FABLE-Request": "1",
+      ...byokHeaders(),
     },
     credentials: "include",
     body: JSON.stringify(params),
@@ -266,6 +310,59 @@ export interface BenchmarkRun {
 
 export async function getBenchmarkRuns(): Promise<BenchmarkRun[]> {
   const { data } = await api.get<BenchmarkRun[]>("/benchmark/runs");
+  return data;
+}
+
+// ─── BYOK key test + PII mode config (Phase 15) ─────────────────────────────
+export async function testByokKey(p: { provider: string; api_key: string; base_url?: string }):
+  Promise<{ ok: boolean; detail: string }> {
+  const { data } = await api.post<{ ok: boolean; detail: string }>("/byok/test", p);
+  return data;
+}
+
+export interface PiiConfig {
+  pii_enabled: boolean;
+  mode: "presidio" | "regex_llm";
+  presidio_url: string;
+  presidio_reachable: boolean;
+  pii_llm_fallback: boolean;
+}
+
+export async function getPiiConfig(): Promise<PiiConfig> {
+  const { data } = await api.get<PiiConfig>("/config/pii");
+  return data;
+}
+
+export async function setPiiMode(mode: "presidio" | "regex_llm", presidioUrl?: string):
+  Promise<{ ok: boolean; mode: string }> {
+  const { data } = await api.post<{ ok: boolean; mode: string }>("/config/pii", {
+    mode, presidio_url: presidioUrl ?? "http://localhost:3000",
+  });
+  return data;
+}
+
+export interface RateLimits {
+  global: string;
+  run: string;
+  adversarial: string;
+  max_concurrent_per_identity: number;
+}
+
+export async function getRateLimits(): Promise<RateLimits> {
+  const { data } = await api.get<RateLimits>("/config/limits");
+  return data;
+}
+
+export interface RedactEntity {
+  type: string; placeholder: string; value: string;
+  start: number; end: number; score: number;
+}
+export interface RedactPreview {
+  original: string; redacted: string; mode: string; entities: RedactEntity[];
+}
+
+export async function previewRedaction(text: string): Promise<RedactPreview> {
+  const { data } = await api.post<RedactPreview>("/config/pii/preview", { text });
   return data;
 }
 

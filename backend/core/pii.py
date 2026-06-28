@@ -237,7 +237,7 @@ async def _presidio_extract(text: str) -> list[EntitySpan]:
 
     Latency: ~50ms p50 (vs ~200ms LLM call). Recall: ~95% (spaCy en_core_web_lg).
     """
-    url = settings.presidio_url
+    url = effective_presidio_url()
     if not url:
         return []
     try:
@@ -343,6 +343,27 @@ def redact_text_sync(text: str) -> str:
         return text
 
 
+# ── Runtime Presidio override (Phase 15) ─────────────────────────────────────
+# Lets the dashboard /config/pii endpoint switch PII mode live (process-global),
+# without a restart. None = use settings.presidio_url (load-time env).
+_presidio_override: str | None = None
+_presidio_override_set: bool = False
+
+
+def set_presidio_override(url: str | None) -> None:
+    """Set (or clear) a runtime Presidio sidecar URL. Pass None to clear → regex+LLM."""
+    global _presidio_override, _presidio_override_set
+    _presidio_override = (url or "").strip() or None
+    _presidio_override_set = True
+
+
+def effective_presidio_url() -> str:
+    """Active Presidio URL: runtime override if set, else the load-time env setting."""
+    if _presidio_override_set:
+        return _presidio_override or ""
+    return settings.presidio_url
+
+
 async def redact(text: str, router=None) -> RedactionResult:
     """Detect PII spans, replace with placeholders, return both."""
     if not settings.pii_enabled:
@@ -355,7 +376,8 @@ async def redact(text: str, router=None) -> RedactionResult:
     except Exception as exc:  # noqa: BLE001
         raise PiiRedactionFailed(f"regex scan failed: {exc}") from exc
 
-    if settings.presidio_url:
+    presidio_url = effective_presidio_url()
+    if presidio_url:
         # Phase 10: Presidio sidecar takes priority over LLM extraction when configured.
         # ~95% NER recall at ~50ms, zero per-request LLM cost. Fails non-fatally.
         spans.extend(await _presidio_extract(text))

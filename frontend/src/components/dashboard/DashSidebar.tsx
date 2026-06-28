@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { ArrowLeft, LayoutGrid, Layers, DollarSign, Activity, Database, UploadCloud } from "lucide-react";
+import { ArrowLeft, LayoutGrid, Layers, DollarSign, Activity, Database, UploadCloud, ShieldCheck, KeyRound, Gauge } from "lucide-react";
 
 export interface NavSection {
   id: string;
@@ -14,16 +14,19 @@ export const NAV_SECTIONS: NavSection[] = [
   { id: "cost",     label: "Cost",     icon: <DollarSign size={15} /> },
   { id: "traces",   label: "Traces",   icon: <Activity size={15} /> },
   { id: "dataset",  label: "Dataset",  icon: <Database size={15} /> },
+  { id: "privacy",  label: "Privacy",  icon: <ShieldCheck size={15} /> },
+  { id: "limits",   label: "Limits",   icon: <Gauge size={15} /> },
 ];
 
 interface DashSidebarProps {
   active: string;
   onNavigate: (id: string) => void;
   onExport: () => void;
+  onByok: () => void;
   children?: React.ReactNode;   // FilterRail slot
 }
 
-export function DashSidebar({ active, onNavigate, onExport, children }: DashSidebarProps) {
+export function DashSidebar({ active, onNavigate, onExport, onByok, children }: DashSidebarProps) {
   return (
     <aside className="glass-panel flex flex-col h-full px-4 py-5" style={{ borderRadius: 0 }}>
       <a href="/" className="flex items-center gap-2 mb-1 text-[13px] transition-colors hover:opacity-80"
@@ -55,8 +58,13 @@ export function DashSidebar({ active, onNavigate, onExport, children }: DashSide
         {children}
       </div>
 
+      <button onClick={onByok}
+              className="mt-4 flex items-center justify-center gap-2 rounded-xl py-2.5 text-[12px] font-medium transition-all glass-ghost"
+              style={{ color: "#cdd6f4" }}>
+        <KeyRound size={15} /> Your API Key
+      </button>
       <button onClick={onExport}
-              className="mt-4 flex items-center justify-center gap-2 rounded-xl py-2.5 text-[12px] font-semibold transition-all hover-lift"
+              className="mt-2 flex items-center justify-center gap-2 rounded-xl py-2.5 text-[12px] font-semibold transition-all hover-lift"
               style={{ background: "#cba6f7", color: "#0d0d1a" }}>
         <UploadCloud size={15} /> Export to Kaggle
       </button>

@@ -56,6 +56,51 @@ def _get_declarations(input_text: str, domain: str):
     return static_declarations(domain=domain, task_input=input_text)
 
 
+async def _run_rounds_asyncio(
+    task_ctx: "TaskContext",
+    round_roles: list[str],
+    max_rounds: int,
+    *,
+    task_id: str,
+) -> tuple[list["AgentMessage"], dict, int]:
+    """Native AgentBus round loop (default orchestrator / baseline).
+
+    Returns (round_messages, judge_result, rounds_completed). The Planner is NOT run
+    here — the caller runs it once before invoking any orchestrator. Roles within a
+    round form a width-1 dependency DAG (critic←actor, validator←critic, refiner←
+    validator), so they run sequentially by design.
+    """
+    round_msgs: list[AgentMessage] = []
+    judge_result: dict = {}
+    rounds_completed = 0
+
+    for round_num in range(max_rounds):
+        task_ctx.metadata["adversarial_round"] = round_num
+        log.info("adversarial_round_start", task_id=task_id, round=round_num + 1, max=max_rounds)
+
+        for role in round_roles:
+            msg = await bus.dispatch(role, task_ctx)
+            round_msgs.append(msg)
+
+            if role == "adv:judge":
+                judge_result = _parse_judge_output(msg.content)
+                rounds_completed = round_num + 1
+                log.info(
+                    "adversarial_judge_verdict",
+                    task_id=task_id,
+                    round=round_num + 1,
+                    verdict=judge_result.get("verdict"),
+                    score=judge_result.get("score"),
+                )
+                if judge_result.get("verdict") == "ACCEPT":
+                    break
+
+        if judge_result.get("verdict") == "ACCEPT":
+            break
+
+    return round_msgs, judge_result, rounds_completed
+
+
 async def run_adversarial_task(
     input_text: str,
     domain: str,
@@ -65,12 +110,86 @@ async def run_adversarial_task(
     session_id: str | None = None,
     router: "ModelRouter | None" = None,
 ) -> dict:
-    """Public entry — wraps the run in a per-identity concurrency slot (F-035)."""
+    """Public entry — wraps the run in a per-identity concurrency slot (F-035).
+
+    Phase 19: when adversarial_ensemble_size > 1, runs N independent debates
+    concurrently and returns the highest-scoring one (run-level self-consistency).
+    The whole ensemble shares one concurrency slot.
+    """
     async with identity_slot(user_id):
-        return await _run_adversarial_task(
-            input_text, domain, max_rounds,
+        ensemble_size = max(1, settings.adversarial_ensemble_size)
+        if ensemble_size == 1:
+            return await _run_adversarial_task(
+                input_text, domain, max_rounds,
+                user_id=user_id, session_id=session_id, router=router,
+            )
+        return await _run_adversarial_ensemble(
+            input_text, domain, max_rounds, ensemble_size,
             user_id=user_id, session_id=session_id, router=router,
         )
+
+
+async def _run_adversarial_ensemble(
+    input_text: str,
+    domain: str,
+    max_rounds: int | None,
+    ensemble_size: int,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    router: "ModelRouter | None" = None,
+) -> dict:
+    """Run N independent adversarial debates in parallel; reduce to the best by judge_score.
+
+    Each debate builds its own TaskContext (separate history) so there is no shared
+    mutable state across the gathered coroutines. The reducer selects the candidate with
+    the highest adversarial_meta.judge_score (tie-break: lowest index) and attaches
+    ensemble_meta describing the full candidate set.
+    """
+    import asyncio
+
+    log.info("adversarial_ensemble_started", size=ensemble_size, domain=domain)
+
+    # Pass session_id=None to every branch: chat-turn persistence is gated on session_id
+    # inside _run_adversarial_task, and we must not write N duplicate turns. Consequence:
+    # in ensemble mode the linked assistant chat turn is skipped (the full transcript is
+    # still persisted via store_adversarial_run). Ensemble is a benchmark/research path;
+    # interactive chat uses ensemble_size=1, which keeps the original persistence intact.
+    tasks = [
+        _run_adversarial_task(
+            input_text, domain, max_rounds,
+            user_id=user_id, session_id=None, router=router,
+        )
+        for _ in range(ensemble_size)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    candidates = [r for r in results if isinstance(r, dict)]
+    if not candidates:
+        # All debates failed — re-raise the first exception for the caller/route to map.
+        first_exc = next((r for r in results if isinstance(r, BaseException)), None)
+        raise first_exc if first_exc else RuntimeError("ensemble produced no results")
+
+    def _score(r: dict) -> float:
+        return float(r.get("adversarial_meta", {}).get("judge_score", 0.0) or 0.0)
+
+    winner_idx, winner = max(enumerate(candidates), key=lambda iv: _score(iv[1]))
+
+    winner["ensemble_meta"] = {
+        "ensemble_size": ensemble_size,
+        "completed": len(candidates),
+        "failed": ensemble_size - len(candidates),
+        "winner_index": winner_idx,
+        "candidate_scores": [_score(c) for c in candidates],
+    }
+    log.info(
+        "adversarial_ensemble_done",
+        size=ensemble_size,
+        completed=len(candidates),
+        winner_index=winner_idx,
+        winner_score=_score(winner),
+    )
+    return winner
 
 
 async def _run_adversarial_task(
@@ -151,38 +270,33 @@ async def _run_adversarial_task(
     round_roles = declarations.active_round_roles() or _ROUND_ROLES
 
     all_messages: list[AgentMessage] = []
-    judge_result: dict = {}
-    rounds_completed = 0
 
     # Planner runs exactly once — sets strategy for all rounds
     planner_msg = await bus.dispatch("adv:planner", task_ctx)
     all_messages.append(planner_msg)
     log.info("adversarial_planner_done", task_id=task_id)
 
-    # Adversarial loop
-    for round_num in range(max_rounds):
-        task_ctx.metadata["adversarial_round"] = round_num
-        log.info("adversarial_round_start", task_id=task_id, round=round_num + 1, max=max_rounds)
-
-        for role in round_roles:
-            msg = await bus.dispatch(role, task_ctx)
-            all_messages.append(msg)
-
-            if role == "adv:judge":
-                judge_result = _parse_judge_output(msg.content)
-                rounds_completed = round_num + 1
-                log.info(
-                    "adversarial_judge_verdict",
-                    task_id=task_id,
-                    round=round_num + 1,
-                    verdict=judge_result.get("verdict"),
-                    score=judge_result.get("score"),
-                )
-                if judge_result.get("verdict") == "ACCEPT":
-                    break
-
-        if judge_result.get("verdict") == "ACCEPT":
-            break
+    # Phase 19: the round loop is the only thing that differs between orchestrators.
+    # Everything around it (RAG, guardrails, scoring, persistence) is shared, so the
+    # asyncio-vs-langgraph comparison isolates exactly the orchestration layer.
+    if settings.orchestrator == "langgraph":
+        try:
+            from ..graph.adversarial_graph import run_rounds_langgraph
+        except ImportError:  # optional dep absent → native loop (no dispatch happened yet)
+            log.warning("langgraph_not_installed_fallback_asyncio")
+            round_msgs, judge_result, rounds_completed = await _run_rounds_asyncio(
+                task_ctx, round_roles, max_rounds, task_id=task_id,
+            )
+        else:
+            # Runtime errors here propagate — do NOT re-run (would double-dispatch the loop).
+            round_msgs, judge_result, rounds_completed = await run_rounds_langgraph(
+                task_ctx, round_roles, max_rounds, task_id=task_id,
+            )
+    else:
+        round_msgs, judge_result, rounds_completed = await _run_rounds_asyncio(
+            task_ctx, round_roles, max_rounds, task_id=task_id,
+        )
+    all_messages.extend(round_msgs)
 
     # Determine final output
     if judge_result.get("verdict") == "ACCEPT" and judge_result.get("final_answer", "").strip():

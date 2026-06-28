@@ -22,6 +22,10 @@ import { ConsensusHeatmap } from "../components/dashboard/ConsensusHeatmap";
 import { TraceWaterfallPro } from "../components/dashboard/TraceWaterfallPro";
 import { FeasibilityCard } from "../components/dashboard/FeasibilityCard";
 import { KaggleExportModal } from "../components/dashboard/KaggleExportModal";
+import { PiiModeCard } from "../components/dashboard/PiiModeCard";
+import { RateLimitCard } from "../components/dashboard/RateLimitCard";
+import { RedactionPreview } from "../components/dashboard/RedactionPreview";
+import { ByokModal } from "../components/ByokModal";
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<BenchmarkSummary | null>(null);
@@ -32,6 +36,7 @@ export default function Dashboard() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS());
   const [activeNav, setActiveNav] = useState("overview");
   const [showKaggle, setShowKaggle] = useState(false);
+  const [showByok, setShowByok] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [s, r, t] = await Promise.allSettled([
@@ -88,7 +93,8 @@ export default function Dashboard() {
       <div className="flex" style={{ minHeight: "100vh" }}>
         {/* Sidebar */}
         <div className="flex-shrink-0 sticky top-0 h-screen" style={{ width: 256 }}>
-          <DashSidebar active={activeNav} onNavigate={scrollTo} onExport={() => setShowKaggle(true)}>
+          <DashSidebar active={activeNav} onNavigate={scrollTo}
+                       onExport={() => setShowKaggle(true)} onByok={() => setShowByok(true)}>
             <FilterRail filters={filters} onChange={setFilters}
                         batches={["latest"]} activeBatch="latest" onBatchChange={() => {}} />
           </DashSidebar>
@@ -144,6 +150,21 @@ export default function Dashboard() {
                        subtitle="Sample size, confidence, McNemar power">
               <FeasibilityCard runs={filtered} />
             </BentoCard>
+
+            <BentoCard id="privacy" title="PII Redaction Mode" span={2}
+                       subtitle="Regex+LLM (default) or local Presidio Docker sidecar">
+              <PiiModeCard />
+            </BentoCard>
+
+            <BentoCard title="Live Redaction Preview" span={2}
+                       subtitle="See exactly what gets masked before it reaches any LLM">
+              <RedactionPreview />
+            </BentoCard>
+
+            <BentoCard id="limits" title="Rate Limits" span={2}
+                       subtitle="Per-IP request limits + per-identity concurrency">
+              <RateLimitCard />
+            </BentoCard>
           </BentoGrid>
 
           <div className="text-[10px] mt-6" style={{ color: "#35354d" }}>
@@ -154,6 +175,7 @@ export default function Dashboard() {
       </div>
 
       {showKaggle && <KaggleExportModal onClose={() => setShowKaggle(false)} />}
+      {showByok && <ByokModal onClose={() => setShowByok(false)} />}
     </div>
   );
 }
