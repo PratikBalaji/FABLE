@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     openrouter_key_exchange_url: str = "https://openrouter.ai/api/v1/auth/keys"
 
     # Models routed via OpenRouter
-    primary_model: str = "anthropic/claude-sonnet-4"      # analyst (deep reasoning)
+    primary_model: str = "anthropic/claude-sonnet-4-5"     # analyst (deep reasoning)
     secondary_model: str = "openai/gpt-4o-mini"           # critic + synthesizer (cheap)
     critic_model: str = "openai/gpt-4o-mini"
 
@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Adversarial pipeline knobs (used by adversarial_lifecycle.py + adversarial.py)
     adversarial_max_rounds: int = Field(default=2, alias="ADVERSARIAL_MAX_ROUNDS")
     adversarial_judge_threshold: float = 0.80
+    # Phase 19: run-level self-consistency ensemble. N independent debates run
+    # concurrently; the highest judge_score wins. Default 1 = single debate (no change).
+    adversarial_ensemble_size: int = Field(default=1, alias="ADVERSARIAL_ENSEMBLE_SIZE")
     # P14: rebalanced (Phase 12) + fixed invalid OpenRouter IDs.
     # meta-llama/llama-3-70b-instruct was NOT routable on OpenRouter (404),
     # forcing a failed call + fallback retry per critic/refiner role per round.
@@ -137,9 +140,25 @@ class Settings(BaseSettings):
     elm_cache_dir: str = Field(default="./data/elm_cache", alias="ELM_CACHE_DIR")
     elm_cache_ttl_hours: int = Field(default=24, alias="ELM_CACHE_TTL_HOURS")
 
+    # Phase 19: orchestrator backend for the agent pipelines. "asyncio" is the native
+    # AgentBus (default, baseline/control). "langgraph" routes the adversarial pipeline
+    # through the LangGraph StateGraph; "langchain" routes standard mode through LCEL.
+    orchestrator: str = Field(default="asyncio", alias="ORCHESTRATOR")
+
+    # Phase 19: LangSmith tracing (optional; auto-emitted by LangChain/LangGraph when
+    # enabled). All optional — absence must never crash (Cloud Run safe).
+    langchain_tracing_v2: bool = Field(default=False, alias="LANGCHAIN_TRACING_V2")
+    langchain_api_key: str = Field(default="", alias="LANGCHAIN_API_KEY")
+    langchain_project: str = Field(default="fable", alias="LANGCHAIN_PROJECT")
+    langchain_endpoint: str = Field(
+        default="https://api.smith.langchain.com", alias="LANGCHAIN_ENDPOINT"
+    )
+
     # Rate limits (per IP; applied on /run and /adversarial-run)
     rate_limit_run: str = Field(default="20/minute", alias="RATE_LIMIT_RUN")
     rate_limit_adv: str = Field(default="5/minute", alias="RATE_LIMIT_ADV")
+    # Phase 19: project-wide default limit for every route (per IP). Backstop quota.
+    rate_limit_global: str = Field(default="100/minute", alias="RATE_LIMIT_GLOBAL")
     # F-035: max in-flight runs per identity (in-process semaphore). 0 = unlimited.
     max_concurrent_per_identity: int = Field(default=2, alias="MAX_CONCURRENT_PER_IDENTITY")
 

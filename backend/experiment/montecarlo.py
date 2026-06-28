@@ -139,13 +139,14 @@ async def run_monte_carlo(
 
     # Step 3: Embed all responses (non-fatal — degrade to empty matrix on failure)
     all_texts = list(flat_responses)
+    n_total = len(all_texts)
     try:
         embeddings = embed_batch(all_texts)  # list of 384-d vectors
     except Exception:  # noqa: BLE001
         embeddings = []
 
     if not embeddings:
-        emb_matrix = np.zeros((1, 1), dtype=np.float32)
+        emb_matrix = np.zeros((n_total, n_total), dtype=np.float32)
     else:
         emb_matrix = np.array(embeddings, dtype=np.float32)
         # L2-normalise for cosine similarity via dot product
@@ -155,7 +156,7 @@ async def run_monte_carlo(
 
     # Step 4: Full cosine similarity matrix
     sim_matrix = (emb_matrix @ emb_matrix.T).tolist()  # (N×N)
-    n_total = len(all_texts)
+
 
     # Step 5: Consensus score (mean of upper-triangle, excluding diagonal)
     if n_total > 1:

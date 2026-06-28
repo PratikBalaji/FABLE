@@ -20,6 +20,7 @@ from ...core.auth import AuthedUser, get_optional_user
 from ...core.config import settings
 from ...core.concurrency import ConcurrencyLimitExceeded
 from ...core.credentials import resolve_credential
+from ...core.byok import byok_router_from_headers
 from ...core.guardrails import GuardrailBlocked
 from ...core.identity import resolve_identity, set_identity_cookie
 from ...core.lifecycle import run_task, run_task_streaming
@@ -41,8 +42,20 @@ def _require_csrf(x_fable_request: str = Header(default="")) -> None:
         )
 
 
-async def _resolve_router(auth: AuthedUser | None) -> ModelRouter:
-    """F-015: return per-user BYOK router if credentials exist; else global router."""
+async def _resolve_router(
+    auth: AuthedUser | None,
+    byok_key: str = "",
+    byok_base_url: str = "",
+    byok_provider: str = "",
+) -> ModelRouter:
+    """Resolve the ModelRouter for this request, in priority order:
+    1. Session BYOK header key (anonymous, no storage) — highest priority.
+    2. F-015 stored per-user credential (login-gated).
+    3. Server global router.
+    """
+    session = byok_router_from_headers(byok_key, byok_base_url, byok_provider)
+    if session is not None:
+        return session
     if settings.use_supabase and auth:
         try:
             cred = await resolve_credential(auth.id)
@@ -61,6 +74,9 @@ async def run_collaboration(
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
     _csrf: None = Depends(_require_csrf),
+    x_byok_key: str = Header(default=""),
+    x_byok_base_url: str = Header(default=""),
+    x_byok_provider: str = Header(default=""),
 ) -> RunResponse:
     identity_id: str | None = None
     session_id: str | None = getattr(req, "session_id", None)
@@ -73,7 +89,7 @@ async def run_collaboration(
             set_identity_cookie(response, ident.cookie_to_set)
 
     # BYOK — per-user router if available
-    active_router = await _resolve_router(auth)
+    active_router = await _resolve_router(auth, x_byok_key, x_byok_base_url, x_byok_provider)
 
     # PII redaction (in)
     try:
@@ -152,6 +168,9 @@ async def run_collaboration_stream(
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
     _csrf: None = Depends(_require_csrf),
+    x_byok_key: str = Header(default=""),
+    x_byok_base_url: str = Header(default=""),
+    x_byok_provider: str = Header(default=""),
 ) -> EventSourceResponse:
     """SSE streaming variant of /run.
 
@@ -169,7 +188,7 @@ async def run_collaboration_stream(
         if ident.cookie_to_set:
             set_identity_cookie(response, ident.cookie_to_set)
 
-    active_router = await _resolve_router(auth)
+    active_router = await _resolve_router(auth, x_byok_key, x_byok_base_url, x_byok_provider)
 
     try:
         redaction = await redact(req.input, router=active_router)
@@ -233,6 +252,9 @@ async def run_adversarial_collaboration(
     response: Response,
     auth: Optional[AuthedUser] = Depends(get_optional_user),
     _csrf: None = Depends(_require_csrf),
+    x_byok_key: str = Header(default=""),
+    x_byok_base_url: str = Header(default=""),
+    x_byok_provider: str = Header(default=""),
 ) -> AdversarialRunResponse:
     """Run the 6-stage adversarial pipeline (Planner→Actor→Critic→Validator→Refiner→Judge)."""
     identity_id: str | None = None
@@ -244,7 +266,7 @@ async def run_adversarial_collaboration(
         if ident.cookie_to_set:
             set_identity_cookie(response, ident.cookie_to_set)
 
-    active_router = await _resolve_router(auth)
+    active_router = await _resolve_router(auth, x_byok_key, x_byok_base_url, x_byok_provider)
 
     # PII redaction (in)
     try:
