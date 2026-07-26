@@ -107,6 +107,36 @@ SEED_SOURCES: dict[str, list[SeedSource]] = {
             label="OWASP Top-10",
         ),
     ],
+    # Grounding for the benchmark's docqa category (D1–D4). Without these the agentic
+    # RAG path has nothing to retrieve for those prompts and the category degenerates
+    # into parametric recall — see RESEARCH_LOG Phase 19 pre-flight audit.
+    "ai_systems": [
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Artificial_Intelligence_Act",
+            domain="ai_systems",
+            label="Wikipedia: EU Artificial Intelligence Act",
+        ),
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Retrieval-augmented_generation",
+            domain="ai_systems",
+            label="Wikipedia: Retrieval-Augmented Generation",
+        ),
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Nearest_neighbor_search",
+            domain="ai_systems",
+            label="Wikipedia: Nearest Neighbor Search",
+        ),
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Vector_database",
+            domain="ai_systems",
+            label="Wikipedia: Vector Database",
+        ),
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Large_language_model",
+            domain="ai_systems",
+            label="Wikipedia: Large Language Model",
+        ),
+    ],
     "finance": [
         SeedSource(
             url="https://en.wikipedia.org/w/index.php?action=raw&title=Financial_statement",
@@ -122,6 +152,17 @@ SEED_SOURCES: dict[str, list[SeedSource]] = {
             url="https://en.wikipedia.org/w/index.php?action=raw&title=Income_statement",
             domain="finance",
             label="Wikipedia: Income Statement",
+        ),
+        # Grounding for F2 (retirement-account comparison).
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Roth_IRA",
+            domain="finance",
+            label="Wikipedia: Roth IRA",
+        ),
+        SeedSource(
+            url="https://en.wikipedia.org/w/index.php?action=raw&title=Individual_retirement_account",
+            domain="finance",
+            label="Wikipedia: Individual Retirement Account",
         ),
     ],
     "writing": [

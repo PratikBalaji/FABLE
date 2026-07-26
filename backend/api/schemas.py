@@ -85,10 +85,32 @@ class AdversarialMeta(BaseModel):
     judge_score: float = 0.0
     judge_rationale: str = ""
     unresolved_issues: list[str] = []
+    # True when the verdict came from the final round, where the Judge's system prompt
+    # (agents/adversarial.py JudgeAgent) forces ACCEPT regardless of quality so the loop
+    # always terminates. Found during Phase 19 60-case eval: 60/60 adversarial runs across
+    # all 3 orchestrators hit rounds_completed==max_rounds, so every ACCEPT in that dataset
+    # was forced, not an organic Judge decision — ACCEPT/REJECT rate is not a discriminating
+    # signal under the current round cap; the numeric score is the real quality readout.
+    forced_accept: bool = False
+
+
+class EnsembleMeta(BaseModel):
+    """Present only when ADVERSARIAL_ENSEMBLE_SIZE > 1 — describes the self-consistency
+    reducer's decision across the N parallel debates (core/adversarial_lifecycle.py)."""
+    ensemble_size: int = 0
+    completed: int = 0
+    failed: int = 0
+    winner_index: int = 0
+    candidate_scores: list[float] = []
+    consensus_pattern: str = ""
+    consensus_used: bool = False
+    consensus_group_size: int = 0
+    num_distinct_answers: int = 0
 
 
 class AdversarialRunResponse(RunResponse):
     adversarial_meta: AdversarialMeta = Field(default_factory=AdversarialMeta)
+    ensemble_meta: EnsembleMeta | None = None
 
 
 class IngestRequest(BaseModel):

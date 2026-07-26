@@ -12,6 +12,10 @@ from backend.core.config import settings
 from backend.rag.pipeline import VectorStore
 from backend.rag import agentic
 
+# Captured before the autouse fixture swaps in a passthrough, so the MMR tests at the
+# bottom of this file can exercise the real implementation.
+_REAL_RERANK_MMR = agentic._rerank_mmr
+
 
 def _fake_embed_batch(texts):
     rng = np.random.default_rng(42)
@@ -21,6 +25,14 @@ def _fake_embed_batch(texts):
 @pytest.fixture(autouse=True)
 def _patch_embed(monkeypatch):
     monkeypatch.setattr("backend.rag.pipeline._api_embed_batch", _fake_embed_batch)
+    # Keep the suite hermetic: without this the MMR reranker calls the real embedder,
+    # which downloads the fastembed model over the network on first use.
+    monkeypatch.setattr(agentic, "embed_batch", _fake_embed_batch)
+    # The CRAG-loop tests below exercise the hop/grade/rewrite logic, not ranking, so
+    # MMR is a passthrough there. The real _rerank_mmr has its own tests further down.
+    async def _passthrough(query, candidates, top_k):
+        return candidates
+    monkeypatch.setattr(agentic, "_rerank_mmr", _passthrough)
     # default agentic config for tests
     monkeypatch.setattr(settings, "agentic_rag_enabled", True)
     monkeypatch.setattr(settings, "agentic_rag_max_hops", 2)
@@ -141,3 +153,63 @@ async def test_non_fatal_on_retrieve_error(monkeypatch):
     monkeypatch.setattr(agentic, "_retrieve_all", boom)
     out = await agentic.agentic_retrieve("q", GraderRouter([[1]]))
     assert out == ""  # never raises
+
+
+# ── MMR re-ranking (Phase 18 follow-up) ─────────────────────────────────────────
+
+def _planted_embedder(vectors: dict[str, list[float]]):
+    """Embedder stub returning a fixed vector per exact text. First input is the query."""
+    def _embed(texts):
+        return [vectors[t] for t in texts]
+    return _embed
+
+
+@pytest.mark.asyncio
+async def test_rerank_mmr_drops_near_duplicate_across_sources(monkeypatch):
+    """Same passage pooled from FAISS and pgvector must not both survive to the grader."""
+    # 3-d planted space: query aligns with axis 0; A and A' are near-identical, B differs.
+    monkeypatch.setattr(agentic, "embed_batch", _planted_embedder({
+        "q":          [1.0, 0.0, 0.0],
+        "dup from corpus": [0.99, 0.10, 0.0],
+        "dup from memory": [0.99, 0.11, 0.0],   # near-identical to the above
+        "distinct passage": [0.80, 0.0, 0.60],  # relevant but different content
+    }))
+    cands = [
+        {"text": "dup from corpus", "source": "corpus", "score": 0.9},
+        {"text": "dup from memory", "source": "memory", "score": 0.9},
+        {"text": "distinct passage", "source": "corpus", "score": 0.7},
+    ]
+    out = await _REAL_RERANK_MMR("q", cands, top_k=2)
+
+    assert len(out) == 2
+    texts = [c["text"] for c in out]
+    # Highest-relevance item is picked first, then MMR must prefer the distinct passage
+    # over its own near-duplicate.
+    assert "distinct passage" in texts
+    assert not ("dup from corpus" in texts and "dup from memory" in texts)
+
+
+@pytest.mark.asyncio
+async def test_rerank_mmr_respects_top_k(monkeypatch):
+    monkeypatch.setattr(agentic, "embed_batch", _fake_embed_batch)
+    out = await _REAL_RERANK_MMR("q", _candidates(6), top_k=3)
+    assert len(out) == 3
+
+
+@pytest.mark.asyncio
+async def test_rerank_mmr_passthrough_on_single_candidate(monkeypatch):
+    def _boom(texts):
+        raise AssertionError("must not embed for a single candidate")
+    monkeypatch.setattr(agentic, "embed_batch", _boom)
+    cands = _candidates(1)
+    assert await _REAL_RERANK_MMR("q", cands, top_k=5) == cands
+
+
+@pytest.mark.asyncio
+async def test_rerank_mmr_fails_open_on_embedder_error(monkeypatch):
+    """A dead embedder must degrade to un-reranked candidates, never drop the run."""
+    def _boom(texts):
+        raise RuntimeError("embedder down")
+    monkeypatch.setattr(agentic, "embed_batch", _boom)
+    cands = _candidates(4)
+    assert await _REAL_RERANK_MMR("q", cands, top_k=2) == cands
