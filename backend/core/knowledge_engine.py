@@ -23,6 +23,7 @@ from typing import Any
 
 import numpy as np
 
+from .config import settings
 from .embeddings import embed_text as _api_embed_text
 from .elm_router import ELMRouter
 
@@ -88,8 +89,12 @@ class KnowledgeEngine:
         self._embeddings_matrix: np.ndarray | None = None
 
         # Phase 11: ELM meta-scorer
-        self._elm = ELMRouter()
-        self._elm.load(self.data_dir / "elm_router.npz")
+        self._elm = ELMRouter(
+            n_hidden=settings.elm_router_n_hidden,
+            min_samples=settings.elm_router_min_samples,
+        )
+        if settings.elm_router_enabled:
+            self._elm.load(self.data_dir / "elm_router.npz")
 
         self._load()
 
@@ -124,7 +129,8 @@ class KnowledgeEngine:
         }
         self._graph_path().write_text(json.dumps(graph_data, indent=2))
         # Phase 11: persist ELM weights alongside graph
-        self._elm.save(self.data_dir / "elm_router.npz")
+        if settings.elm_router_enabled:
+            self._elm.save(self.data_dir / "elm_router.npz")
 
     def _append_run(self, run: RunRecord) -> None:
         with open(self._runs_path(), "a") as f:
@@ -284,7 +290,7 @@ class KnowledgeEngine:
         self._rebuild_embedding_matrix()
 
         # Phase 11: feed this run into the ELM meta-scorer
-        if scores:
+        if scores and settings.elm_router_enabled:
             try:
                 features = self._build_elm_features(embedding, input_text, domain)
                 score_avg = sum(scores.values()) / len(scores)

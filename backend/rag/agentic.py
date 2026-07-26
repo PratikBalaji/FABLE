@@ -12,14 +12,25 @@ breaks because retrieval hiccuped. Bounded by agentic_rag_max_hops (default 2).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
+import numpy as np
 import structlog
 
 from ..core.config import settings
+from ..core.embeddings import embed_batch
 
 log = structlog.get_logger()
+
+_MMR_LAMBDA = 0.7  # relevance vs. redundancy trade-off (higher = favor relevance)
+# Cosine above which two candidates are treated as the same passage and the lower-scoring
+# one is dropped outright. MMR alone does not handle this: at lambda=0.7 the relevance term
+# dominates, so an exact duplicate of the top hit still outranks a genuinely distinct
+# passage whose relevance is ~0.2 lower. Pooling FAISS + pgvector routinely surfaces the
+# same chunk twice, so the duplicate is removed before MMR runs.
+_DUP_COSINE = 0.97
 
 _GRADE_SYSTEM = (
     "You are a retrieval relevance grader. Given a user QUERY and a numbered list of "
@@ -57,6 +68,61 @@ async def _grade(query: str, candidates: list[dict], router) -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         log.warning("agentic_grade_failed", err=str(exc)[:120])
         return candidates  # fail-safe: don't drop everything on a grader error
+
+
+async def _rerank_mmr(query: str, candidates: list[dict], top_k: int) -> list[dict]:
+    """MMR re-rank across pooled sources (F.A.B.L.E Phase 18 follow-up): balances
+    query relevance against redundancy so near-duplicate FAISS/pgvector hits don't
+    both survive to the grader. Fail-open — any error returns candidates unchanged.
+
+    `embed_batch` is synchronous (and CPU-bound under EMBEDDINGS_PROVIDER=local), so it
+    runs in a worker thread — otherwise it blocks the event loop inline on every hop and
+    inflates the measured end-to-end latency."""
+    if len(candidates) <= 1:
+        return candidates
+    try:
+        texts = [c["text"] for c in candidates]
+        embeddings = await asyncio.to_thread(embed_batch, [query] + texts)
+        emb = np.array(embeddings, dtype=np.float32)
+        norms = np.linalg.norm(emb, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        emb = emb / norms
+
+        q_emb = emb[0]
+        cand_emb = emb[1:]
+        relevance = cand_emb @ q_emb
+
+        # Pass 1 — drop near-duplicates, keeping the more query-relevant copy.
+        by_relevance = sorted(range(len(candidates)), key=lambda i: -relevance[i])
+        kept: list[int] = []
+        for i in by_relevance:
+            if any(float(cand_emb[i] @ cand_emb[j]) >= _DUP_COSINE for j in kept):
+                continue
+            kept.append(i)
+        if len(kept) < len(candidates):
+            log.info("agentic_rerank_deduped", before=len(candidates), after=len(kept))
+
+        # Pass 2 — MMR over the survivors for topical diversity.
+        selected: list[int] = []
+        remaining = list(kept)
+        k = min(top_k, len(kept))
+
+        while remaining and len(selected) < k:
+            if not selected:
+                best = max(remaining, key=lambda i: relevance[i])
+            else:
+                def _mmr_score(i: int) -> float:
+                    redundancy = max(float(cand_emb[i] @ cand_emb[j]) for j in selected)
+                    return _MMR_LAMBDA * float(relevance[i]) - (1 - _MMR_LAMBDA) * redundancy
+
+                best = max(remaining, key=_mmr_score)
+            selected.append(best)
+            remaining.remove(best)
+
+        return [candidates[i] for i in selected]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("agentic_rerank_failed", err=str(exc)[:120])
+        return candidates
 
 
 async def _rewrite(query: str, router) -> str | None:
@@ -105,6 +171,7 @@ async def agentic_retrieve(
     try:
         for hop in range(max_hops):
             candidates = await _retrieve_all(current_query, identity_id, user_id)
+            candidates = await _rerank_mmr(current_query, candidates, settings.agentic_rag_top_k)
             relevant = await _grade(current_query, candidates, router)
             log.info(
                 "agentic_rag_hop",

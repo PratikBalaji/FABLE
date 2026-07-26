@@ -139,12 +139,16 @@ async def _run_adversarial_ensemble(
     session_id: str | None = None,
     router: "ModelRouter | None" = None,
 ) -> dict:
-    """Run N independent adversarial debates in parallel; reduce to the best by judge_score.
+    """Run N independent adversarial debates in parallel; reduce via consensus voting.
 
     Each debate builds its own TaskContext (separate history) so there is no shared
-    mutable state across the gathered coroutines. The reducer selects the candidate with
-    the highest adversarial_meta.judge_score (tie-break: lowest index) and attaches
-    ensemble_meta describing the full candidate set.
+    mutable state across the gathered coroutines. The reducer groups candidates by
+    normalized final_answer text (majority vote — the consensus cognitive pattern),
+    picks the largest group, and within that group returns the candidate with the
+    highest adversarial_meta.judge_score (tie-break: lowest index). Ties between
+    equally-sized groups are broken by comparing each group's mean judge_score.
+    Falls back to plain highest-judge_score selection when every candidate's answer
+    is unique (no majority to form).
     """
     import asyncio
 
@@ -173,7 +177,33 @@ async def _run_adversarial_ensemble(
     def _score(r: dict) -> float:
         return float(r.get("adversarial_meta", {}).get("judge_score", 0.0) or 0.0)
 
-    winner_idx, winner = max(enumerate(candidates), key=lambda iv: _score(iv[1]))
+    def _normalize(r: dict) -> str:
+        return re.sub(r"\s+", " ", (r.get("final_answer") or "").strip().lower())
+
+    def _group_mean_score(indices: list[int]) -> float:
+        return sum(_score(candidates[i]) for i in indices) / len(indices)
+
+    # Guard: if every candidate came back with a blank final_answer they would all
+    # normalize to "" and form one unanimous group — reporting perfect consensus over
+    # nothing. Skip the vote entirely and fall back to judge_score.
+    all_empty = all(not _normalize(c) for c in candidates)
+    if all_empty:
+        log.warning("adversarial_ensemble_all_empty", size=ensemble_size, completed=len(candidates))
+        groups = {}
+        consensus_used = False
+        # Degenerate to plain best-of-N: a single-element group, same shape as the
+        # all-distinct fallback, so consensus_group_size doesn't read as "unanimous".
+        best_indices = [max(range(len(candidates)), key=lambda i: _score(candidates[i]))]
+    else:
+        # Group candidates by normalized final_answer — the consensus vote.
+        groups = {}
+        for idx, cand in enumerate(candidates):
+            groups.setdefault(_normalize(cand), []).append(idx)
+        consensus_used = len(groups) < len(candidates)
+        best_indices = max(groups.values(), key=lambda idxs: (len(idxs), _group_mean_score(idxs)))
+
+    winner_idx = max(best_indices, key=lambda i: _score(candidates[i]))
+    winner = candidates[winner_idx]
 
     winner["ensemble_meta"] = {
         "ensemble_size": ensemble_size,
@@ -181,6 +211,11 @@ async def _run_adversarial_ensemble(
         "failed": ensemble_size - len(candidates),
         "winner_index": winner_idx,
         "candidate_scores": [_score(c) for c in candidates],
+        "consensus_pattern": "majority_vote",
+        "consensus_used": consensus_used,
+        "consensus_group_size": len(best_indices),
+        "num_distinct_answers": len(groups),
+        "all_answers_empty": all_empty,
     }
     log.info(
         "adversarial_ensemble_done",
@@ -188,6 +223,8 @@ async def _run_adversarial_ensemble(
         completed=len(candidates),
         winner_index=winner_idx,
         winner_score=_score(winner),
+        consensus_used=consensus_used,
+        consensus_group_size=len(best_indices),
     )
     return winner
 

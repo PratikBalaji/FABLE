@@ -140,6 +140,12 @@ class Settings(BaseSettings):
     elm_cache_dir: str = Field(default="./data/elm_cache", alias="ELM_CACHE_DIR")
     elm_cache_ttl_hours: int = Field(default=24, alias="ELM_CACHE_TTL_HOURS")
 
+    # ELM Router (Phase 11) — extreme learning machine meta-scorer for model routing.
+    # Distinct from the ELM (Embedded Language Model) settings above.
+    elm_router_enabled: bool = Field(default=True, alias="ELM_ROUTER_ENABLED")
+    elm_router_n_hidden: int = Field(default=128, alias="ELM_ROUTER_N_HIDDEN")
+    elm_router_min_samples: int = Field(default=5, alias="ELM_ROUTER_MIN_SAMPLES")
+
     # Phase 19: orchestrator backend for the agent pipelines. "asyncio" is the native
     # AgentBus (default, baseline/control). "langgraph" routes the adversarial pipeline
     # through the LangGraph StateGraph; "langchain" routes standard mode through LCEL.

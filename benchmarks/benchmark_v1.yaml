@@ -17,6 +17,22 @@
 #   Each references a shared_question id and adds n_variants.
 #
 # finished_runs: 10 Phase-14 completed results (5 standard + 5 adversarial) — single truth source.
+#   IMPORTANT: these ran against the ORIGINAL v1 prompts, which were rewritten on
+#   2026-07-26 (see below). They are a LEGACY batch on a different prompt set and must be
+#   reported separately — never pooled into the 20 shared_questions aggregates.
+#
+# Prompt revision 2026-07-26
+# --------------------------
+# The original 20 prompts were single-pass recall or canonical textbook items
+# (bat-and-ball, Bertrand's box, textbook base-rate Bayes) with nothing for the Critic or
+# Validator to catch — the likely cause of Phase-14's adversarial 80% vs standard 82%.
+# Rewritten so critique has a checkable target: interacting constraints where the obvious
+# solution violates one, planted false premises the answer must reject, and verifiable
+# arithmetic. The docqa prompts additionally now have real corpus backing (ai_systems +
+# finance domains in backend/rag/seed_corpus.py) and grade abstention, since previously
+# none of D1-D4 had a single supporting chunk in the store.
+# IDs, categories and word_sensitive flags are unchanged, so the Monte Carlo selection
+# and all downstream reporting structure still line up.
 #
 # Run counts:
 #   finished:   10   (5 std + 5 adv, Phase-14, same prompts as legacy eval_runs.py)
@@ -26,8 +42,12 @@
 #   total:        60
 #
 # To execute the pending 50 runs (backend must be running on :8000):
-#   python scripts/benchmark_v1.py
-#   Cost estimate: ~$0.10–$0.30 for all 50 runs at current OpenRouter pricing.
+#   python scripts/benchmark_v1.py            (--resume to continue an interrupted run)
+#   Cost estimate: ~$1.10-$2.50 for all 50 runs at current OpenRouter pricing; the
+#   rewritten prompts elicit longer answers and genuinely use both adversarial rounds,
+#   so budget toward the upper end. The runner's printed total is a LOWER BOUND — it
+#   prices aggregate tokens against one model id while a run spans several, and Monte
+#   Carlo cost is not tracked at all. Budget from the OpenRouter dashboard.
 
 meta:
   name: "60 Preliminary Eval Test Cases"
@@ -52,159 +72,224 @@ meta:
 shared_questions:
 
   # ── Code (4) ──────────────────────────────────────────────────────────────
+  # Each carries interacting constraints where the obvious solution violates one,
+  # so the Critic has a checkable failure to find rather than a stylistic opinion.
   - id: C1
     category: code
     word_sensitive: false
     prompt: >-
-      Write a Python function that returns the nth Fibonacci number iteratively,
-      and explain its time and space complexity.
+      Write a Python function returning the k most frequent integers in a list.
+      It must run in O(n) average time, so do not sort and do not use
+      collections.Counter.most_common. Break ties by returning the smaller integer
+      first, and state explicitly what your function does when k exceeds the number
+      of distinct elements and when the input list is empty.
 
   - id: C2
     category: code
     word_sensitive: true
     prompt: >-
-      Implement a thread-safe Python singleton using a metaclass, with a brief
-      explanation of why the naive implementation is not thread-safe.
+      Implement a thread-safe singleton in Python using a metaclass with
+      double-checked locking. Explain why the second check inside the lock is still
+      necessary even though CPython's GIL makes individual attribute assignments
+      atomic, and identify at least one scenario in which your implementation would
+      still produce two distinct instances.
 
   - id: C3
     category: code
     word_sensitive: true
     prompt: >-
-      Write a Python decorator that retries a function up to N times with
-      exponential back-off, and show how to use it on an HTTP call that may fail.
+      Write a Python retry decorator using exponential back-off with full jitter.
+      It must preserve the wrapped function's name, docstring and signature; retry
+      on 5xx and connection errors but never on 4xx; bound total elapsed time rather
+      than only attempt count; and work on both sync and async functions. State which
+      of these requirements is hardest to satisfy and why.
 
   - id: C4
     category: code
     word_sensitive: false
     prompt: >-
-      Given a list of integers, write an O(n) Python function that finds the two
-      numbers that sum to a target value, and explain your approach.
+      Given a sorted list of integers that may contain duplicates, write a Python
+      function returning every unique pair summing to a target. It must run in O(n)
+      time using O(1) extra space excluding the output. Explain why the usual
+      hash-map approach fails the space requirement here, and show how your solution
+      avoids emitting the same pair twice.
 
   # ── Reasoning / Math (4) ──────────────────────────────────────────────────
+  # Deliberately NOT the canonical puzzles (bat-and-ball, Bertrand's box, textbook
+  # base-rate Bayes) — those are memorised verbatim. These have checkable arithmetic
+  # and a final part that punishes pattern-matching.
   - id: R1
     category: reasoning
     word_sensitive: false
     prompt: >-
-      A bat and a ball cost $1.10 together. The bat costs $1.00 more than the ball.
-      How much does the ball cost? Show your step-by-step reasoning.
+      A server handles each request in 40 ms. Adding a cache with a 92% hit rate
+      serves hits in 2 ms. Compute the new mean latency and the speedup versus no
+      cache, then the theoretical maximum speedup if the hit rate reached 100%.
+      Finally, determine the hit rate required for a 10x speedup and state whether
+      it is attainable. Show each calculation.
 
   - id: R2
     category: reasoning
     word_sensitive: true
     prompt: >-
-      A hospital tests a disease that affects 1% of the population. The test is
-      99% sensitive (true positive rate) and 99% specific (true negative rate).
-      If a patient tests positive, what is the probability they actually have
-      the disease? Show your work using Bayes' theorem.
+      Over 30 days a monitoring system fired 45 alerts, of which 9 were real
+      incidents. There were 12 real incidents in total that period. A colleague
+      concludes the system is "75% accurate because it only missed 3". Compute
+      precision, recall and F1, explain precisely what is wrong with the colleague's
+      reasoning, and state what additional quantity you would need in order to
+      compute accuracy at all.
 
   - id: R3
     category: reasoning
     word_sensitive: true
     prompt: >-
-      You have three boxes: one contains two gold coins, one has two silver coins,
-      and one has one gold and one silver. All boxes are mislabelled. You pick one
-      coin from one box and it is gold. Which box did you pick from, and what is
-      the probability the other coin in that box is also gold?
+      Services A, B and C each have 99.5% independent monthly uptime. Compute
+      availability for (a) a chain requiring all three, and (b) the same chain with B
+      replaced by two redundant parallel instances. Give both as percentages to four
+      decimal places and as expected downtime in minutes per 30-day month. Then state
+      which buys more availability: making B redundant, or improving A alone to 99.9%.
 
   - id: R4
     category: reasoning
     word_sensitive: false
     prompt: >-
-      If you invest $10,000 at 7% annual interest compounded monthly, how much
-      will you have after 10 years? Show the formula and the calculation.
+      An investment gains 50% in year one and loses 50% in year two. Compute the
+      total return and the compound annual growth rate. Compare the arithmetic mean
+      of the two annual returns with the geometric mean, explain which correctly
+      describes realised performance and why the other is misleading here, and give
+      the constant annual return that would have produced the same final value.
 
   # ── Factual / Explanation (4) ─────────────────────────────────────────────
+  # Each embeds a widely-repeated but false or over-broad claim the answer must
+  # reject — this is what gives the Validator something real to check.
   - id: F1
     category: factual
     word_sensitive: false
     prompt: >-
-      Summarize the main causes of the 2008 global financial crisis in 3–5 sentences,
-      covering both structural and regulatory factors.
+      Explain the role of credit default swaps in the 2008 financial crisis. Address
+      the common claim that CDS were primarily used by banks to hedge existing
+      mortgage exposure, distinguish covered from naked positions, and identify which
+      institution's CDS book triggered a federal rescue and why its collateral
+      obligations escalated so rapidly.
 
   - id: F2
     category: factual
     word_sensitive: false
     prompt: >-
-      Explain the difference between a Roth IRA and a Traditional IRA, and describe
-      when each type is more advantageous from a tax perspective.
+      Compare a Roth IRA and a Traditional IRA on tax treatment of contributions and
+      withdrawals, required minimum distributions, and early-withdrawal rules for
+      contributions versus earnings. A common claim is that a Roth is always the
+      better choice for a young saver because growth is tax-free — state the
+      conditions under which that claim is false. Note that dollar limits change
+      annually and identify any figure you are unsure is current.
 
   - id: F3
     category: factual
     word_sensitive: true
     prompt: >-
-      What is the difference between supervised, unsupervised, and reinforcement
-      learning? Give one real-world application example for each.
+      Explain the difference between a model's parameters, its hyperparameters, and
+      its training data distribution. Then explain why a model with 99% training and
+      94% validation accuracy can still fail badly in production, naming at least
+      three distinct failure modes that this particular accuracy gap would NOT
+      reveal.
 
   - id: F4
     category: factual
     word_sensitive: true
     prompt: >-
-      Explain how HTTPS works from the moment a browser connects to a server
-      through to the first encrypted byte of application data, covering TLS
-      handshake steps.
+      Walk through a TLS 1.3 handshake from ClientHello to the first encrypted
+      application byte. Explain what changed from TLS 1.2 in round-trip count and
+      why, what 0-RTT early data is and the specific security property it gives up,
+      and why forward secrecy requires ephemeral keys. Note any step that would
+      differ if the client offered a pre-shared key.
 
   # ── RAG / CRAG / Document QA (4) ─────────────────────────────────────────
+  # Answerable from the seeded corpus (ai_systems + finance domains, see
+  # backend/rag/seed_corpus.py). Each asks the model to separate what the retrieved
+  # material supports from what it is inferring — abstention is the graded behaviour.
   - id: D1
     category: docqa
     word_sensitive: true
     prompt: >-
-      Based on information you can retrieve or reason about, explain the main
-      provisions of the EU AI Act and which AI system risk categories it defines.
+      Using the available reference material, describe the risk-tier structure the EU
+      AI Act defines. List the tiers, give an example system for each, and explain
+      what obligations attach specifically to the high-risk tier. If the material does
+      not state enforcement dates or penalty amounts, say so explicitly rather than
+      estimating them.
 
   - id: D2
     category: docqa
     word_sensitive: false
     prompt: >-
-      What is Retrieval-Augmented Generation (RAG) and how does it differ from
-      fine-tuning? Describe when you would choose one over the other.
+      Using the available reference material, explain what Retrieval-Augmented
+      Generation is and how it differs from fine-tuning. Then assess a claim the
+      material may not support: that RAG eliminates hallucination. State what RAG does
+      and does not fix, and identify a failure mode that remains even when retrieval
+      returns perfectly relevant documents.
 
   - id: D3
     category: docqa
     word_sensitive: true
     prompt: >-
-      Explain the CRAG (Corrective Retrieval-Augmented Generation) approach:
-      what problem it solves over naive RAG, how the grading step works,
-      and when it falls back to web search.
+      Using the available reference material, explain how a retrieval system judges
+      whether retrieved passages are relevant, and what such a system should do when
+      retrieval quality is poor. If the material does not describe a specific named
+      "corrective RAG" method, state that plainly and answer from what the material
+      does cover instead of inventing method details.
 
   - id: D4
     category: docqa
     word_sensitive: false
     prompt: >-
-      Describe how vector similarity search (HNSW / FAISS) works and what
-      trade-offs exist between exact nearest-neighbour search and approximate
-      nearest-neighbour search in production RAG systems.
+      Using the available reference material, explain the trade-off between exact and
+      approximate nearest-neighbour search: what approximate methods give up, why
+      exact search becomes impractical as dimensionality grows, and what "curse of
+      dimensionality" means here. Clearly separate claims the retrieved material
+      supports from any you are adding from general knowledge.
 
   # ── Writing / Creative (4) ────────────────────────────────────────────────
+  # Constraints are mechanically checkable (word counts, banned terms) so "creative"
+  # runs still produce an objective pass/fail surface for the Critic.
   - id: W1
     category: writing
     word_sensitive: false
     prompt: >-
-      Propose three distinct product names for a privacy-first AI note-taking app,
-      with a one-line rationale for each name.
+      Propose three product names for a privacy-first AI note-taking app. Each must be
+      one or two words, must not contain "AI", "Note", "Mind" or "Vault", should be
+      plausibly available as a .com, and must not be an existing well-known trademark.
+      Give a one-line rationale and one concrete risk for each, then rank them and
+      justify the ranking against those constraints.
 
   - id: W2
     category: writing
     word_sensitive: true
     prompt: >-
-      Write a concise two-paragraph executive summary for a startup that uses
-      multi-agent LLMs to automate enterprise compliance audits, targeting a
-      Series A pitch deck.
+      Write a two-paragraph executive summary for a Series A deck for a company using
+      multi-agent LLMs to automate enterprise compliance audits. It must be under 150
+      words, state a specific quantified customer outcome, avoid the words
+      "revolutionary", "leverage", "cutting-edge" and "seamless", and acknowledge one
+      genuine risk without undermining the pitch. Then name the hardest constraint to
+      satisfy and why.
 
   - id: W3
     category: writing
     word_sensitive: true
     prompt: >-
-      Draft a 150-word blog post introduction explaining why adversarial AI
-      evaluation matters for production LLM deployments, aimed at a technical
-      but non-research audience.
+      Draft a 150-word blog introduction on why adversarial evaluation matters for
+      production LLM systems, addressed to senior engineers who doubt it justifies the
+      added cost and latency. It must open with a concrete failure scenario rather than
+      a definition, concede the cost objection explicitly before answering it, and use
+      no analogy to human peer review. State the exact word count at the end.
 
   - id: W4
     category: writing
     word_sensitive: false
     prompt: >-
-      Write three variations of a system prompt for an AI customer-support agent
-      that is helpful, professional, and refuses to discuss competitors, showing
-      how tone shifts across a formal, neutral, and friendly register.
+      Write three system prompts for an AI customer-support agent that must decline to
+      discuss competitors. Each must explicitly handle the same edge case — a customer
+      asking "is your product better than X?", where a flat refusal reads as evasive.
+      Show formal, neutral and friendly registers, then explain which handles that edge
+      case best and what makes a refusal feel candid rather than stonewalling.
 
 # ---------------------------------------------------------------------------
 # Monte Carlo cases (10) — word-sensitive prompts, sent to /experiment/run
@@ -216,80 +301,90 @@ montecarlo:
     category: code
     n_variants: 4
     selection_rationale: >-
-      "thread-safe singleton using a metaclass" — small rephrasing (e.g. "lock-based
-      singleton" vs "metaclass singleton") changes the recommended implementation path.
+      Double-checked-locking singleton — "lock-based" vs "metaclass" phrasing changes
+      the implementation path, and whether the GIL clause survives paraphrase decides
+      if the model rebuts the atomicity misconception.
 
   - id: MC-C3
     shared_id: C3
     category: code
     n_variants: 4
     selection_rationale: >-
-      "retries with exponential back-off" — wording around retry count, jitter, and
-      decorator vs wrapper shifts the code structure meaningfully.
+      Multi-constraint retry decorator — how many of the four requirements (signature
+      preservation, 4xx/5xx split, total-time bound, sync+async) survive paraphrase
+      directly drives how many the answer actually satisfies.
 
   - id: MC-R2
     shared_id: R2
     category: reasoning
     n_variants: 4
     selection_rationale: >-
-      Bayes' theorem medical test — sensitivity vs specificity phrasing directly
-      affects which probability the model computes first, causing divergence.
+      Alert-quality metrics with a planted false conclusion — whether the paraphrase
+      keeps the colleague's "75% accurate" claim, and how prominently, changes whether
+      the model rebuts it or silently computes the metrics.
 
   - id: MC-R3
     shared_id: R3
     category: reasoning
     n_variants: 4
     selection_rationale: >-
-      Three-box puzzle — subtle wording changes ("mislabelled" vs "incorrectly
-      labelled") or perspective shifts cause divergent probability reasoning.
+      Availability arithmetic — "redundant parallel instances" vs "failover" vs
+      "replicas" shifts whether the model models B as 1-(1-p)^2 or as a serial chain,
+      which changes every downstream number.
 
   - id: MC-F3
     shared_id: F3
     category: factual
     n_variants: 4
     selection_rationale: >-
-      ML paradigm comparison — asking for "differences" vs "definitions" vs
-      "trade-offs" shifts the structure and depth of the factual response.
+      Parameters vs hyperparameters vs data distribution — whether the paraphrase
+      foregrounds the definitions or the "why does it still fail in production" half
+      determines how many genuine failure modes surface.
 
   - id: MC-F4
     shared_id: F4
     category: factual
     n_variants: 4
     selection_rationale: >-
-      TLS handshake explanation — asking from "browser" vs "client" perspective,
-      or specifying TLS 1.2 vs 1.3, yields substantively different answers.
+      TLS 1.3 handshake — dropping or keeping the explicit "1.3" and the 0-RTT clause
+      swings answers between a generic TLS overview and the specific round-trip and
+      replay-safety details being asked for.
 
   - id: MC-D1
     shared_id: D1
     category: docqa
     n_variants: 4
     selection_rationale: >-
-      EU AI Act — phrasing as "main provisions" vs "risk categories" vs
-      "prohibited AI systems" shifts what the model retrieves and surfaces.
+      EU AI Act risk tiers — "risk categories" vs "prohibited systems" vs "obligations"
+      changes what the retriever surfaces, and whether the abstention instruction on
+      dates/penalties is honoured or quietly ignored.
 
   - id: MC-D3
     shared_id: D3
     category: docqa
     n_variants: 4
     selection_rationale: >-
-      CRAG explanation — "grading step" vs "relevance check" vs "corrective
-      retrieval" in the prompt changes which components the model emphasises.
+      Relevance grading with an abstention trap — "corrective RAG" vs "relevance check"
+      vs "grading step" strongly affects whether the model admits the corpus lacks a
+      named method or fabricates one. The highest-value divergence probe in the suite.
 
   - id: MC-W2
     shared_id: W2
     category: writing
     n_variants: 4
     selection_rationale: >-
-      Executive summary — "Series A pitch deck" vs "investor memo" vs "one-pager"
-      shifts format, length, and vocabulary substantially.
+      Constrained executive summary — paraphrases that soften or drop the banned-word
+      list and the 150-word cap produce measurably different constraint-violation
+      rates, which is directly checkable.
 
   - id: MC-W3
     shared_id: W3
     category: writing
     n_variants: 4
     selection_rationale: >-
-      Blog intro — "adversarial AI evaluation" vs "red-teaming LLMs" vs
-      "stress-testing language models" triggers very different opening hooks.
+      Sceptical-audience blog intro — "adversarial evaluation" vs "red-teaming" vs
+      "stress-testing", and how firmly the concede-the-objection instruction survives
+      paraphrase, changes both the hook and whether the objection is answered at all.
 
 # ---------------------------------------------------------------------------
 # Finished runs (10) — Phase 14, 2026-06-13 22:52 UTC

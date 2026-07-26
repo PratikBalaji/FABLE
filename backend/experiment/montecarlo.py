@@ -40,6 +40,12 @@ _PARAPHRASE_SYSTEM = (
     "- Variant 2: informal, conversational\n"
     "- Variant 3: adversarial — reframe as a challenge or edge-case probe\n"
     "- Variant 4+: direct question form, progressively shorter\n"
+    "Diversity constraints (strict — this measures response robustness, not synonym "
+    "swaps):\n"
+    "- No two variants may share more than half of their non-stopword content words.\n"
+    "- Do not merely swap individual words for synonyms; restructure sentence form, "
+    "vary the angle of approach, or change what's asked first.\n"
+    "- Every variant must preserve the original prompt's intent and required output.\n"
     "Output ONLY a JSON array of strings: [\"variant1\", \"variant2\", ...]\n"
     "No markdown, no explanation, no extra keys."
 )

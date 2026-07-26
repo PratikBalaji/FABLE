@@ -76,14 +76,22 @@ refine-and-rejudge rounds. Every request passes through a fail-closed governance
 guardrails, and AES-256-GCM credential encryption), is grounded by a corrective
 retrieval layer (CRAG-style relevance grading over a persisted FAISS corpus and per-user
 semantic memory), and is scored by a five-dimension rubric that yields an auditable verdict.
-We describe the architecture and its governance and retrieval design, and report a
-preliminary head-to-head evaluation of ten runs (five prompts $\times$ two modes) measuring
-verdict, rubric score, and end-to-end latency. The adversarial protocol reached a 5/5 accept
-rate at the cost of roughly $2.2\times$ latency over the standard protocol's 4/5 pass rate,
-illustrating the accuracy--cost trade-off the framework is built to quantify. We position
-the system as a reproducible platform for measuring \emph{disagreement and synthesis}, not
-only final-answer accuracy, and release the orchestration code, governance layer, and
-evaluation harness as an integrated artifact.
+We describe the architecture and its governance and retrieval design, and report two rounds of
+head-to-head evaluation: an initial ten-run batch on largely-memorized prompts, and a
+follow-up 60-case suite (20 standard, 20 adversarial, 10 Monte Carlo) redesigned so every
+prompt has a genuine flaw to catch --- interacting constraints, a planted false premise, or a
+claim that must be checked against a seeded retrieval corpus --- run under three orchestrator
+backends (native asyncio, LangGraph, LangChain). On the discriminative suite the adversarial
+protocol's mean score is 15--18 points below the standard committee's (72--74\% vs.\ 87--89\%,
+consistent across all three orchestrators) at roughly $1.3\times$ the latency, the opposite
+framing from the original batch and, we argue, the more informative one. Diagnosing this gap
+surfaced a measurement artifact in our own harness: the Judge's system prompt forces an ACCEPT
+verdict on the final refine round regardless of quality, so 100\% (60/60) of adversarial runs
+in this dataset accepted by construction rather than genuine judgment, making the numeric score
+the only real signal. We report this finding, its fix, and its implications alongside the
+headline numbers. We position the system as a reproducible platform for measuring
+\emph{disagreement and synthesis}, not only final-answer accuracy, and release the
+orchestration code, governance layer, and evaluation harness as an integrated artifact.
 \end{abstract}
 
 \section{Introduction}
@@ -108,9 +116,11 @@ a measurable question rather than a rhetorical one.
 
 This paper reflects the system as actually implemented---the governance layer, both
 pipelines, the retrieval stack, and the evaluation harness are running code, not a roadmap.
-We are deliberate, however, about the scope of the empirical claims: the results here are a
-single preliminary batch of ten runs over five prompts per mode, intended to demonstrate the
-harness and surface the trade-off, not to establish a large-scale benchmark with statistical
+We are deliberate, however, about the scope of the empirical claims: the results here combine
+an initial ten-run batch (five prompts per mode) with a follow-up 60-case, three-orchestrator
+suite built to be discriminative rather than memorizable. Both are intended to demonstrate the
+harness, surface the trade-off, and---in the second batch's case---surface a genuine artifact
+in the evaluation methodology itself, not to establish a large-scale benchmark with statistical
 guarantees.
 
 \paragraph{Contributions.}
@@ -126,8 +136,12 @@ guarantees.
         encryption, validated by a 40-finding internal security audit (Section~\ref{sec:gov}).
   \item A corrective-retrieval stack (CRAG-style grading over FAISS $+$ semantic memory) and
         a golden-case reasoning cache for token/latency reduction (Section~\ref{sec:retrieval}).
-  \item A reproducible evaluation harness and a preliminary ten-run, two-mode comparison on
-        verdict, rubric score, and latency (Section~\ref{sec:eval}).
+  \item A reproducible evaluation harness; a preliminary ten-run, two-mode comparison and a
+        follow-up 60-case, three-orchestrator, discriminative-prompt suite (verdict, rubric
+        score, latency); and a diagnosed measurement artifact---the Judge's forced final-round
+        ACCEPT makes the adversarial accept rate 100\% by construction under a two-round
+        cap---reported alongside the headline numbers rather than smoothed over
+        (Section~\ref{sec:eval}).
 \end{enumerate}
 
 \section{Related Work}
@@ -258,13 +272,11 @@ Refiner.
   \node[store, left=8mm of corpus] (mem){pgvector\\memory};
   \draw[dflow] (corpus) -- (rag);
   \draw[dflow] (mem) -- (rag);
-  \node[store, below=6mm of ju] (gc){Golden-case\\cache};
-  \draw[dflow] (ju) |- (gc);
-  \draw[dflow] (gc) -| (rag);
 \end{tikzpicture}
 \caption{Adversarial pipeline. The Critic and Validator attack the Actor's draft; the Refiner
 specifies fixes and the Actor revises for up to two rounds (red loop); the Judge arbitrates.
-High-quality completed runs are promoted to the golden-case cache for later reuse.}
+The golden-case cache is consulted and populated by the standard pipeline only
+(Section~\ref{sec:standard}); the adversarial path always executes in full.}
 \label{fig:adversarial}
 \end{figure}
 
@@ -337,9 +349,13 @@ creative prompt (WARN, 60\%), where the rubric penalized coverage and actionabil
 (prompt + completion token counts) and priced via a model price table in
 \texttt{backend/core/cost.py}. Estimated cost per run at current OpenRouter rates:
 standard $\approx\$0.003$, adversarial $\approx\$0.030$, Monte Carlo (4 variants)
-$\approx\$0.045$. The full 60-case suite is estimated at \$0.10--\$0.30 total,
-comfortably within a single free-tier API credit. Aggregated costs are surfaced in the
-live benchmark dashboard and reported per run in the runner output.
+$\approx\$0.045$. The 50 pending cases of the 60-case suite there\-fore cost
+$\approx\$1.10$ ($20\times0.003 + 20\times0.030 + 10\times0.045$), and we budget
+\$1--\$2.50 to absorb multi-round variance. Aggregated costs are surfaced in the live
+benchmark dashboard and reported per run in the runner output; we note that the runner's
+own total is a lower bound, since it prices a run's aggregate token usage against the
+single model identifier the endpoint returns while an adversarial run spans several
+models.
 
 \begin{table}[t]
 \centering
@@ -395,6 +411,9 @@ showed up as \emph{reduced variance and eliminated failures} rather than a highe
 consistent with the framing that critique-driven interaction trades cost for reliability.
 We stress that $n=5$ prompts per mode in a single batch is preliminary; we report it to
 demonstrate the harness and the measured trade-off, not as a statistically powered result.
+\textbf{As Section~\ref{sec:findings} details, this 5/5 accept rate is not evidence of quality
+on its own} --- every run here used both refine rounds, and the Judge's prompt forces an ACCEPT
+verdict on the final round regardless of score.
 
 \begin{table}[t]
 \centering
@@ -410,9 +429,51 @@ Adversarial & 5/5 & 80\% & 72.3 \\
 \end{tabular}
 \end{table}
 
+\subsection{60-case discriminative re-evaluation}
+\label{sec:sixty-case}
+The five-prompt batch above uses canonical, largely memorized items (e.g.\ the bat-and-ball
+problem) with no planted flaw for the Critic or Validator to catch, which likely explains why
+the adversarial mean did not exceed the standard mean. We re-ran the harness on a redesigned
+20-prompt set (4 per category $\times$ 5 categories: code, reasoning, factual, document QA,
+writing) built so every prompt has something to critique: interacting constraints an obvious
+solution violates (e.g.\ ``$O(n)$ time \emph{and} $O(1)$ extra space \emph{and} handle
+duplicates''), a planted false premise, or a claim that must be checked against a seeded
+retrieval corpus rather than parametric memory. We also seeded a dedicated corpus (EU AI Act,
+retrieval-augmented generation, nearest-neighbor search, Roth IRA) so the document-QA category
+actually exercises the CRAG-lite retrieval path instead of degenerating into recall. Each
+configuration ran all 60 cases (20 standard, 20 adversarial, 10 Monte Carlo) under three
+orchestrator backends (native \texttt{asyncio}, LangGraph, LangChain) to test whether they
+execute the same pipeline within noise.
+
+\begin{table}[t]
+\centering
+\caption{60-case suite, redesigned discriminative prompts, one orchestrator per row.}
+\label{tab:sixtycase}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Orchestrator & Std.\ score/latency/pass & Adv.\ score/latency/accept \\
+\midrule
+asyncio   & 89\% / 86.4s / 20\slash20 & 72\% / 105.1s / 20\slash20 \\
+langgraph & 89\% / 82.5s / 20\slash20 & 74\% / 114.7s / 20\slash20 \\
+langchain & 87\% / 88.2s / 19\slash20 & 71\% / 115.8s / 20\slash20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Unlike the five-prompt batch, the adversarial mean here is clearly below the standard mean
+(72--74\% vs.\ 87--89\%) with a wide score spread (std.\ dev.\ 12\%, range 35--92\% across all
+60 adversarial runs pooled), confirming the redesigned prompts give the Critic/Validator/Judge
+something to actually discriminate on. The three orchestrators agree within noise on both
+modes --- the one exception is \texttt{langchain}'s standard pass, which WARNed on one docqa
+case that PASSed at 87--90\% under the other two backends, discussed alongside that case's
+adversarial instability in Section~\ref{sec:findings}. Per-category adversarial means (pooled
+across all three orchestrator runs, $n=12$/category) rank: reasoning 85\%, factual 75\%,
+writing 73\%, code 71\%, and document QA 58\% (range 35--72\%) --- the corpus-grounding
+constraint is the hardest for the Refiner to fully satisfy within the two-round budget.
+
 \subsection{Root-cause findings during evaluation}
 \label{sec:findings}
-The harness doubled as a debugging instrument. Two findings are worth recording because they
+The harness doubled as a debugging instrument. Three findings are worth recording because they
 affect any reproduction. First, an early adversarial batch hit the client timeout: two roles
 were configured with a model ID that 404s on the provider, forcing a failed call plus fallback
 retry every round, compounded by inline per-agent summarization; fixing the IDs and moving to
@@ -421,6 +482,30 @@ Second, two runs initially reported REJECT/0\% when the Judge had in fact return
 JSON verdict was truncated by the token budget and the parser fell through to its reject
 default. Raising the Judge budget and adding a field-level salvage parser recovered the valid
 acceptances and moved the adversarial accept rate from 3/5 to 5/5.
+
+Third, and most consequential: investigating why the 60-case adversarial mean sat well below
+the standard mean (Section~\ref{sec:sixty-case}) surfaced a measurement artifact rather than
+only a capability gap. The Judge's system prompt instructs it to force an ACCEPT verdict on the
+final round \emph{regardless of quality}, so the pipeline always terminates rather than looping
+indefinitely. Checking \texttt{rounds\_completed} across all 60 adversarial-mode records from
+the three orchestrator runs (and, retroactively, the five-run legacy batch above) shows
+\textbf{100\% (60/60) hit the round cap with verdict ACCEPT} --- not one run in the dataset
+organically accepted before the final round. \emph{The ACCEPT/REJECT verdict is therefore not a
+discriminating signal under the current two-round cap; it is 100\% by construction, and the
+numeric Judge score is the only quality signal that varies.} This is corroborated qualitatively:
+pulling the (truncated) rationale text for the three lowest-scoring/most volatile cases across
+all three orchestrator runs shows the Judge correctly identifying the same planted violation at
+round 2 that it flagged at round 1 in every instance --- a complexity-constraint violation for a
+code prompt (scores 45--65\%) and unsourced or fabricated claims against the retrieval corpus
+for two document-QA prompts (scores 35--72\%). The harness is working as designed; the Refiner
+simply does not always resolve a flagged issue within one revision. We added a
+\texttt{forced\_accept} field to the API response (true when
+\texttt{judge\_verdict==ACCEPT} and \texttt{rounds\_completed==max\_rounds}) so future runs
+report this directly rather than requiring retroactive log analysis. We did not have budget
+remaining to test whether raising \texttt{adversarial\_max\_rounds} above 2 reduces the
+forced-accept rate, nor were full per-round transcripts persisted for this batch to confirm
+\emph{why} the Refiner's revision failed rather than only that the Judge still flagged the same
+issue --- both are noted as immediate future work in Section~\ref{sec:limitations}.
 
 \section{Implementation Status}
 The governance layer (PII redaction with reinjection, Presidio sidecar option, two-layer
@@ -431,8 +516,17 @@ Kubernetes deployment, plus an AWS (ECS/EKS) path, is defined as infrastructure-
 Preliminary: the ten-run batch is a single seed; multi-user pgvector memory and the
 managed-cloud deployments are validated by code review and mocked tests rather than a live
 production run. We are explicit about this boundary so the empirical claims are not overread.
+The adversarial pipeline additionally supports an optional run-level self-consistency
+ensemble (\texttt{ADVERSARIAL\_ENSEMBLE\_SIZE}): $N$ debates are sampled independently and
+reduced by majority vote over the final answer, falling back to highest Judge score when no
+majority exists. Budget constraints limited live verification to $N=2$ on 3 cases rather than
+the intended $N=5$ over the full suite: the reducer's fallback path (score tie-break when no
+majority answer forms) fired correctly in all 3 cases, and picked the higher-scoring candidate
+in the 2 non-tied cases, but $N=2$ rarely produces an exact-text majority, so the majority-vote
+branch itself remains unverified on live data.
 
 \section{Limitations}
+\label{sec:limitations}
 \textbf{Small evaluation.} Five prompts per mode in one batch is a demonstration, not a
 benchmark; there are no confidence intervals, no human evaluation, and no comparison against
 external multi-agent baselines on a standard dataset.
@@ -445,17 +539,33 @@ model availability and on the chosen role-to-model mapping.
 reasoning; quantifying that effect is future work.
 \textbf{Single-process caches.} The golden-case cache and per-identity concurrency limit are
 in-process and do not yet coordinate across distributed replicas.
+\textbf{Ensemble majority-vote branch unverified at scale.} The 3-case, $N=2$ probe
+(Section~\ref{sec:findings}) exercised the reducer's fallback path only; the full $N=5$,
+60-case ensemble benchmark remains future work pending budget.
+\textbf{Adversarial ACCEPT rate is not a discriminating metric under the current round cap.}
+Every adversarial run in the 60-case suite (and the original five-run batch) hit
+\texttt{rounds\_completed==max\_rounds} with a forced ACCEPT verdict
+(Section~\ref{sec:findings}); any reported ACCEPT/REJECT rate under
+\texttt{adversarial\_max\_rounds}$=2$ should be read as 100\% by construction, not as evidence
+of quality --- only the numeric Judge score discriminates. Whether a higher round cap lets the
+Judge organically accept or reject, and whether the Refiner's revision genuinely fails on the
+flagged cases or simply is not given enough attempts, are both open and require a rerun with
+more rounds and persisted per-round transcripts.
 
 \section{Conclusion}
 F.A.B.L.E.\ is an attempt to make multi-agent LLM workflows inspectable, governable, and
 comparable from the ground up. By sharing one governance, retrieval, and scoring spine across
 a fast standard committee and a slower adversarial protocol, it turns ``does adversarial
-interaction help?'' into a measured question; our preliminary ten-run batch shows the
-expected accuracy-for-cost trade-off, with the adversarial protocol eliminating the
-standard committee's lone failure at roughly twice the latency. The contribution is the
-platform and its framing---disagreement and synthesis as first-class, governance as a
-research variable---together with an honest account of what is built and what remains to be
-validated at scale.
+interaction help?'' into a measured question. Our original ten-run batch used largely
+memorized prompts and showed only a small accuracy-for-cost trade-off; redesigning the suite
+to plant genuine flaws (Section~\ref{sec:sixty-case}) surfaced a real 15--18-point gap between
+standard and adversarial scores, and, in the process, an artifact in our own harness --- the
+Judge's forced-accept-on-final-round rule makes ACCEPT/REJECT uninformative under a two-round
+cap, a finding we consider as valuable as the headline numbers. Three orchestrator backends
+(native asyncio, LangGraph, LangChain) agree within noise on both pipelines. The contribution
+is the platform and its framing---disagreement and synthesis as first-class, governance as a
+research variable, and an evaluation harness that caught its own measurement bugs---together
+with an honest account of what is built and what remains to be validated at scale.
 
 \bibliographystyle{plainnat}
 % \bibliography{references}
@@ -473,6 +583,14 @@ Run-level summaries only; Critic \texttt{claude-3.5-haiku}; Refiner \texttt{gpt-
 \texttt{vector(384)} schema and FAISS index aligned. \textbf{Determinism.} Model APIs are not
 deterministic; absolute numbers will vary between batches, but the harness, prompts, and
 scoring are fixed so the \emph{comparison} is reproducible.
+\textbf{Declared initial state.} The system carries three adaptive stores that would
+otherwise let one run influence the next: the golden-case cache, the knowledge-engine run
+history, and the ELM meta-scorer's weights. Every reported run therefore starts from an
+empty \texttt{data/knowledge/} (reset via \texttt{scripts/reset\_benchmark\_state.py}) and
+executes with \texttt{GOLDEN\_CACHE\_ENABLED=false}. This matters specifically because the
+standard pipeline is measured twice under different orchestrators over an identical prompt
+set: with the cache live, the second pass would match its own cached entries at similarity
+$\approx 1.0$ and return recycled answers rather than executing the pipeline.
 
 \section{Rubric and Verdict}
 Quality is scored on five dimensions---accuracy, depth, clarity, actionability, coverage. The
