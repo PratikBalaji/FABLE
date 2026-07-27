@@ -106,7 +106,7 @@ class EnsembleMeta(BaseModel):
     consensus_used: bool = False
     consensus_group_size: int = 0
     num_distinct_answers: int = 0
-
+    all_answers_empty: bool = False
 
 class AdversarialRunResponse(RunResponse):
     adversarial_meta: AdversarialMeta = Field(default_factory=AdversarialMeta)
