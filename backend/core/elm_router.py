@@ -16,14 +16,16 @@ Role in FABLE:
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import structlog
 
-log = logging.getLogger(__name__)
+# structlog, not stdlib logging: every call site here passes structured kwargs
+# (n_samples=, path=, ...), which stdlib Logger rejects with TypeError.
+log = structlog.get_logger()
 
 # Minimum samples before ELM takes over from the heuristic
 MIN_SAMPLES: int = 5
@@ -53,6 +55,7 @@ class ELMRouter:
     """
 
     n_hidden: int = N_HIDDEN
+    min_samples: int = MIN_SAMPLES
 
     # Random fixed projection (set once, never changed)
     _W: Optional[np.ndarray] = field(default=None, repr=False)
@@ -96,7 +99,7 @@ class ELMRouter:
             self._H_rows.append(h)
             self._Y_rows.append(np.float32(score_avg))
 
-            if len(self._H_rows) >= MIN_SAMPLES:
+            if len(self._H_rows) >= self.min_samples:
                 H = np.array(self._H_rows, dtype=np.float32)        # (N, n_hidden)
                 T = np.array(self._Y_rows, dtype=np.float32)[:, None]  # (N, 1)
                 # Closed-form: β = (HᵀH + λI)⁻¹Hᵀ T   (ridge, λ=1e-4)
@@ -144,6 +147,10 @@ class ELMRouter:
                 "b": self._b,  # type: ignore[dict-item]
                 "H": np.array(self._H_rows, dtype=np.float32) if self._H_rows else np.empty((0,)),
                 "Y": np.array(self._Y_rows, dtype=np.float32) if self._Y_rows else np.empty((0,)),
+                # Persist the geometry so load() can detect a config change instead of
+                # restoring a _W whose shape no longer matches self.n_hidden.
+                "n_hidden": np.array([self.n_hidden], dtype=np.int32),
+                "min_samples": np.array([self.min_samples], dtype=np.int32),
             }
             if self._beta is not None:
                 arrays["beta"] = self._beta
@@ -158,6 +165,19 @@ class ELMRouter:
             return
         try:
             data = np.load(path)
+            # Geometry check: a saved _W is (n_features, n_hidden). If n_hidden was
+            # changed via ELM_ROUTER_N_HIDDEN since this file was written, the restored
+            # weights are unusable — discard them and retrain from scratch rather than
+            # crashing later inside predict()'s matmul.
+            saved_n_hidden = int(data["n_hidden"][0]) if "n_hidden" in data else int(data["W"].shape[1])
+            if saved_n_hidden != self.n_hidden:
+                log.warning(
+                    "elm_load_skipped_geometry_mismatch",
+                    saved_n_hidden=saved_n_hidden,
+                    configured_n_hidden=self.n_hidden,
+                    path=str(path),
+                )
+                return
             self._W = data["W"]
             self._b = data["b"]
             if "beta" in data:
