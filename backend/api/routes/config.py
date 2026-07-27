@@ -51,6 +51,27 @@ async def get_rate_limits() -> dict:
     }
 
 
+@router.get("/config/runtime")
+async def get_runtime_config() -> dict:
+    """Expose the settings that determine which code path a benchmark run exercises.
+
+    These are read from the environment once at import, so a run started against a
+    backend launched with the wrong values silently produces results for a different
+    configuration than intended — e.g. a three-way "orchestrator parity" table that is
+    really the same asyncio path three times. This endpoint makes that checkable before
+    spending provider credit.
+    """
+    return {
+        "orchestrator": settings.orchestrator,
+        "adversarial_ensemble_size": settings.adversarial_ensemble_size,
+        "adversarial_max_rounds": settings.adversarial_max_rounds,
+        "golden_cache_enabled": settings.golden_cache_enabled,
+        "agentic_rag_enabled": settings.agentic_rag_enabled,
+        "elm_router_enabled": settings.elm_router_enabled,
+        "embeddings_provider": settings.embeddings_provider,
+    }
+
+
 @router.get("/config/pii")
 async def get_pii_config() -> dict:
     url = effective_presidio_url()

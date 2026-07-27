@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sse_starlette.sse import EventSourceResponse
 
-from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta, VerdictMeta, RecycledMeta
+from ..schemas import RunRequest, RunResponse, AgentMessageOut, GraphState, AdversarialRunResponse, AdversarialMeta, VerdictMeta, RecycledMeta, EnsembleMeta
 from ...core.auth import AuthedUser, get_optional_user
 from ...core.config import settings
 from ...core.concurrency import ConcurrencyLimitExceeded
@@ -317,6 +317,7 @@ async def run_adversarial_collaboration(
 
     adv_meta = result.get("adversarial_meta", {})
     raw_verdict = result.get("verdict", {})
+    raw_ensemble = result.get("ensemble_meta")
 
     return AdversarialRunResponse(
         task_id=result["task_id"],
@@ -336,5 +337,10 @@ async def run_adversarial_collaboration(
             judge_score=adv_meta.get("judge_score", 0.0),
             judge_rationale=adv_meta.get("judge_rationale", ""),
             unresolved_issues=adv_meta.get("unresolved_issues", []),
+            forced_accept=(
+                adv_meta.get("judge_verdict") == "ACCEPT"
+                and adv_meta.get("rounds_completed", 0) >= adv_meta.get("max_rounds", 2)
+            ),
         ),
+        ensemble_meta=EnsembleMeta(**raw_ensemble) if raw_ensemble else None,
     )
