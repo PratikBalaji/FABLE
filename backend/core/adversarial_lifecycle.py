@@ -188,12 +188,7 @@ async def _run_adversarial_ensemble(
     # nothing. Skip the vote entirely and fall back to judge_score.
     all_empty = all(not _normalize(c) for c in candidates)
     if all_empty:
-        log.warning("adversarial_ensemble_all_empty", size=ensemble_size, completed=len(candidates))
-        groups = {}
-        consensus_used = False
-        # Degenerate to plain best-of-N: a single-element group, same shape as the
-        # all-distinct fallback, so consensus_group_size doesn't read as "unanimous".
-        best_indices = [max(range(len(candidates)), key=lambda i: _score(candidates[i]))]
+        groups = {"": list(range(len(candidates)))}
     else:
         # Group candidates by normalized final_answer — the consensus vote.
         groups = {}
