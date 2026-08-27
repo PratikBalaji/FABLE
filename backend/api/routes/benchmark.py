@@ -123,7 +123,7 @@ def _load_yaml() -> dict | None:
     if not _YAML_PATH.exists():
         return None
     try:
-        import yaml
+        import yaml  # type: ignore[import-untyped]
         with open(_YAML_PATH, encoding="utf-8") as f:
             return yaml.safe_load(f)
     except Exception as exc:
@@ -172,7 +172,11 @@ def benchmark_runs() -> list[dict]:
     mc_cases = bench.get("montecarlo", [])
 
     def _completed_index(records: list[dict]) -> dict[str, dict]:
-        return {r.get("id"): r for r in (records or []) if r.get("id")}
+        return {
+            rec_id: r
+            for r in (records or [])
+            if isinstance((rec_id := r.get("id")), str) and rec_id
+        }
 
     std_done = _completed_index(raw.get("standard", []))
     adv_done = _completed_index(raw.get("adversarial", []))

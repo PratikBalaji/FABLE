@@ -1,11 +1,13 @@
 """FastAPI application entry point."""
 from contextlib import asynccontextmanager
+from typing import cast
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.responses import Response
 
 from ..agents.register import register_all
 from ..agents.adversarial_register import register_adversarial
@@ -35,7 +37,13 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit_handler(request: Request, exc: Exception) -> Response:
+    return _rate_limit_exceeded_handler(request, cast(RateLimitExceeded, exc))
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 # F-008/F-009: restrict CORS to trusted origins with credentials.
 # Set CORS_ORIGINS env var in production (e.g. "https://app.vercel.app").

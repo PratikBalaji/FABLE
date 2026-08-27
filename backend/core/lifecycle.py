@@ -285,8 +285,9 @@ async def _run_core_inner(
     except Exception:
         summaries = {"run_summary": "", "per_agent": {}}
     per_agent_summaries: dict[str, str] = summaries.get("per_agent", {})
-    for msg in serialized:
-        msg["summary"] = per_agent_summaries.get(msg["message_id"], "")
+    for serialized_msg in serialized:
+        message_id = str(serialized_msg.get("message_id", ""))
+        serialized_msg["summary"] = per_agent_summaries.get(message_id, "")
     run_summary: str = summaries.get("run_summary", "")
     verdict = derive_verdict(scores)
 

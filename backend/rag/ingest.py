@@ -34,7 +34,8 @@ def _is_safe_url(url: str) -> bool:
     for info in infos:
         addr = info[4][0]
         try:
-            ip = ipaddress.ip_address(addr.split("%")[0])  # strip scope id
+            addr_value = addr.split("%")[0] if isinstance(addr, str) else str(addr)
+            ip = ipaddress.ip_address(addr_value)  # strip scope id
         except ValueError:
             return False
         if (

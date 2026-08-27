@@ -85,7 +85,7 @@ async def _rerank_mmr(query: str, candidates: list[dict], top_k: int) -> list[di
         embeddings = await asyncio.to_thread(embed_batch, [query] + texts)
         emb = np.array(embeddings, dtype=np.float32)
         norms = np.linalg.norm(emb, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1.0, norms)
+        norms = np.where(norms == 0, np.float32(1.0), norms)
         emb = emb / norms
 
         q_emb = emb[0]

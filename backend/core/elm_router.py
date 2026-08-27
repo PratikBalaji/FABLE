@@ -154,7 +154,7 @@ class ELMRouter:
             }
             if self._beta is not None:
                 arrays["beta"] = self._beta
-            np.savez_compressed(path, **arrays)
+            np.savez_compressed(path, **arrays)  # type: ignore[arg-type]
             log.info("elm_saved", path=str(path), n_samples=self.n_samples)
         except Exception as exc:  # noqa: BLE001
             log.warning("elm_save_failed", error=str(exc))

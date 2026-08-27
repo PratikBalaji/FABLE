@@ -189,6 +189,8 @@ async def _run_adversarial_ensemble(
     all_empty = all(not _normalize(c) for c in candidates)
     if all_empty:
         groups = {"": list(range(len(candidates)))}
+        consensus_used = False
+        best_indices = [max(groups[""], key=lambda i: _score(candidates[i]))]
     else:
         # Group candidates by normalized final_answer — the consensus vote.
         groups = {}
@@ -384,12 +386,16 @@ async def _run_adversarial_task(
 
     # Summaries (concurrent, non-fatal)
     try:
-        summaries = await summarize_run(input_text, serialized, final_output, router=router)
+        if router is not None:
+            summaries = await summarize_run(input_text, serialized, final_output, router=router)
+        else:
+            summaries = {"run_summary": "", "per_agent": {}}
     except Exception:
         summaries = {"run_summary": "", "per_agent": {}}
     per_agent_summaries: dict[str, str] = summaries.get("per_agent", {})
-    for msg in serialized:
-        msg["summary"] = per_agent_summaries.get(msg["message_id"], "")
+    for serialized_msg in serialized:
+        message_id = str(serialized_msg.get("message_id", ""))
+        serialized_msg["summary"] = per_agent_summaries.get(message_id, "")
     run_summary: str = summaries.get("run_summary", "")
 
     # Verdict mirrors adversarial judge

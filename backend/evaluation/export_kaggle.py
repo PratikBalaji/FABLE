@@ -53,7 +53,7 @@ _RESULTS_GLOB = "data/benchmarks/results/benchmark_v1_*.json"
 def _load_benchmark_data() -> dict[str, Any]:
     """Load benchmark yaml + latest results JSON (if any)."""
     try:
-        import yaml
+        import yaml  # type: ignore[import-untyped]
     except ImportError:
         raise RuntimeError("PyYAML required: pip install pyyaml")
 
@@ -336,7 +336,7 @@ async def push_to_kaggle(
 
     # Inject creds into environment for the Kaggle SDK
     import os
-    env_backup = {}
+    env_backup: dict[str, str | None] = {}
     try:
         for k, v in [("KAGGLE_USERNAME", username), ("KAGGLE_KEY", key)]:
             env_backup[k] = os.environ.get(k)
@@ -396,11 +396,11 @@ async def push_to_kaggle(
         return await asyncio.get_event_loop().run_in_executor(None, _push)
     finally:
         # Restore env
-        for k, v in env_backup.items():
-            if v is None:
-                os.environ.pop(k, None)
+        for env_key, prev_val in env_backup.items():
+            if prev_val is None:
+                os.environ.pop(env_key, None)
             else:
-                os.environ[k] = v
+                os.environ[env_key] = prev_val
 
 
 # ---------------------------------------------------------------------------

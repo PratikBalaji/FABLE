@@ -157,7 +157,7 @@ async def run_monte_carlo(
         emb_matrix = np.array(embeddings, dtype=np.float32)
         # L2-normalise for cosine similarity via dot product
         norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1.0, norms)
+        norms = np.where(norms == 0, np.float32(1.0), norms)
         emb_matrix = emb_matrix / norms
 
     # Step 4: Full cosine similarity matrix

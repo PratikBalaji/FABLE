@@ -98,6 +98,6 @@ async def summarize_run(
             per_agent[mid] = summary
 
     last = results[-1]
-    run_summary: str = last if isinstance(last, str) else ""
+    run_summary = last if isinstance(last, str) else ""
 
     return {"run_summary": run_summary, "per_agent": per_agent}
