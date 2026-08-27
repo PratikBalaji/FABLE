@@ -186,7 +186,6 @@ def build_jsonl(data: dict[str, Any]) -> str:
 
 def build_reproducer_notebook(data: dict[str, Any]) -> nbformat.NotebookNode:
     """Build a Kaggle-ready reproducer notebook."""
-    bench = data["bench"]
     nb = new_notebook()
     cells = []
 
