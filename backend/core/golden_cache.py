@@ -261,7 +261,7 @@ class GoldenCaseCache:
         """Compact trajectory context string injected into warm-start TaskContext."""
         steps = [f"[{s.role}/{s.model.split('/')[-1]}]: {s.summary}" for s in golden.trajectory]
         return (
-            f"[Golden trajectory — prior high-quality run on similar topic]\n"
+            "[Golden trajectory — prior high-quality run on similar topic]\n"
             + "\n".join(steps)
             + f"\n[Prior answer]: {golden.final_answer[:500]}"
         )

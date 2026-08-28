@@ -193,8 +193,9 @@ async def run_collaboration_stream(
     try:
         redaction = await redact(req.input, router=active_router)
     except PiiRedactionFailed as exc:
+        err_msg = str(exc)
         async def _err():
-            yield {"data": json.dumps({"type": "error", "detail": f"pii_redaction_failed: {exc}"})}
+            yield {"data": json.dumps({"type": "error", "detail": f"pii_redaction_failed: {err_msg}"})}
         return EventSourceResponse(_err())
 
     input_for_pipeline = redaction.redacted

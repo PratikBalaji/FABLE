@@ -112,7 +112,7 @@ def get_traces(limit: int = 50) -> list[dict]:
         return []
     try:
         lines = _TRACES_FILE.read_text(encoding="utf-8").splitlines()
-        spans = [json.loads(l) for l in lines if l.strip()]
+        spans = [json.loads(line) for line in lines if line.strip()]
         return spans[-limit:]
     except Exception as exc:
         log.warning("traces_read_error", error=str(exc))
