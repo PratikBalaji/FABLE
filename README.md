@@ -12,13 +12,13 @@
 |--------|-------|
 | Agent roles (adversarial) | 6 (Planner → Actor → Critic → Validator → Refiner → Judge) |
 | Agent roles (standard) | 3 (Analyst → Critic → Synthesizer) |
-| Standard mean score (Phase-14) | **82%** (4/5 pass) |
-| Adversarial mean score (Phase-14) | **80%** (5/5 accept) |
-| Standard mean latency | 32.8 s |
-| Adversarial mean latency | 72.3 s |
+| Standard mean score | **86%** |
+| Adversarial mean score | **73%** |
+| Standard mean latency | 77.1 s |
+| Adversarial mean latency | 107.1 s |
 | Security audit | 40 findings — 35 patched, 5 accepted risk |
-| Total eval cases (v1 suite) | **60** (10 done, 50 pending) |
-| Est. full suite cost | $0.10–$0.30 |
+| Total eval cases (v1 suite) | **60** (60 done) |
+| Full suite cost | $0.0000 |
 
 ---
 
@@ -104,11 +104,11 @@ The canonical eval suite lives in [`benchmarks/benchmark_v1.yaml`](benchmarks/be
 
 | Section | Cases | Description |
 |---------|-------|-------------|
-| Standard | 20 | 20 shared prompts → `/run` |
-| Adversarial | 20 | Same 20 prompts → `/adversarial-run` (identical wording for fair comparison) |
-| Monte Carlo | 10 | Best 2 word-sensitive prompts per category → `/experiment/run` (4 paraphrase variants) |
-| Finished (Phase-14) | 10 | 5 std + 5 adv, backfilled from Phase-14 eval run |
-| **Total** | **60** | |
+| Standard | 20 | 20 shared prompts → `/run` (Completed) |
+| Adversarial | 20 | Same 20 prompts → `/adversarial-run` (Completed) |
+| Monte Carlo | 10 | Best 2 word-sensitive prompts per category → `/experiment/run` (Completed) |
+| Legacy (Phase-14) | 10 | 5 std + 5 adv, backfilled from Phase-14 eval run (Completed) |
+| **Total** | **60** | All 60 cases completed |
 
 **Categories (4 each):** code · reasoning/math · factual/explanation · RAG/CRAG/DocQA · writing/creative
 
@@ -126,7 +126,7 @@ python scripts/benchmark_v1.py --dry-run
 
 Results: `benchmarks/BENCHMARK_RESULTS.md` (markdown) + `data/benchmarks/results/benchmark_v1_<ts>.json` (raw).
 
-**Cost estimate:** $0.10–$0.30 total for all 50 pending runs (see `backend/core/cost.py`).
+**Cost estimate:** $0.0000 total for all runs (using local models).
 
 Full results table: [benchmarks/BENCHMARK_RESULTS.md](benchmarks/BENCHMARK_RESULTS.md)
 
