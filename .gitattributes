@@ -1,0 +1,13 @@
+# Limit GitHub's language breakdown to Python and TypeScript.
+# Exclude everything else from Linguist statistics.
+*.sh        linguist-vendored
+*.bash      linguist-vendored
+*.sql       linguist-vendored
+*.css       linguist-vendored
+*.scss      linguist-vendored
+*.ipynb     linguist-vendored
+*.js        linguist-vendored
+*.mjs       linguist-vendored
+*.cjs       linguist-vendored
+Dockerfile  linguist-vendored
+*.Dockerfile linguist-vendored
